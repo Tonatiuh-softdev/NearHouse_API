@@ -1,0 +1,16 @@
+# Gradle y compilación
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+out/
+
+# Secretos
+.env
+
+# Sistema
+.DS_Store
+Thumbs.db

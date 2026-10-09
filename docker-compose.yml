@@ -1,0 +1,9 @@
+# Levanta SOLO la API. La base de datos es la de Railway (configurada en .env).
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file: .env
+    ports:
+      - "8080:8080"
