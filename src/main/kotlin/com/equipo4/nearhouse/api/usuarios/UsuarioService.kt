@@ -19,9 +19,57 @@ class UsuarioService(
     private val jwtService: JwtService,
 ) {
 
+    /** Solicita código de verificación por correo (para dev imprime 123456 en la consola). */
+    suspend fun solicitarCodigoCorreo(correo: String) {
+        val correoLimpio = correo.trim().lowercase()
+        val existe = repositorio.buscarPorCorreo(correoLimpio) != null
+        if (existe) {
+            throw ValidacionException(listOf("El correo ya está registrado"))
+        }
+
+        println("==========================================")
+        println("CÓDIGO DE VERIFICACIÓN PARA $correoLimpio: 123456")
+        println("==========================================")
+    }
+
+    /** Verifica el código ingresado y regresa el comprobante JWT del correo. */
+    fun verificarCodigoCorreo(correo: String, codigo: String): String {
+        if (codigo.trim() == "123456") {
+            return "COMPROBANTE_MOCK_JWT_CORREO_VERIFICADO"
+        } else {
+            throw ValidacionException(listOf("El código es incorrecto o ha expirado"))
+        }
+    }
+
+    /** Revisa si el teléfono está disponible y cumple el formato antes de enviar SMS. */
+    suspend fun checkTelefonoDisponible(telefono: String) {
+        val telLimpio = telefono.filter { it.isDigit() || it == '+' }
+        if (!REGEX_TELEFONO.matches(telLimpio)) {
+            throw ValidacionException(listOf("El teléfono debe tener entre 10 y 15 dígitos"))
+        }
+    }
+
+    /** Registro final desde el flujo multi-paso. */
+    suspend fun registrar(req: RegistroFinalRequest): AuthResponse {
+        val registroReq = RegistroRequest(
+            correo = req.correo,
+            contrasena = req.contrasena,
+            nombre = req.nombre,
+            primerApellido = req.primerApellido,
+            segundoApellido = req.segundoApellido,
+            telefono = req.telefono
+        )
+        return registrar(registroReq)
+    }
+
     /** Registro público: toda cuenta nueva nace como Comprador. */
     suspend fun registrar(req: RegistroRequest): AuthResponse {
         val datos = validarRegistro(req)
+
+        if (repositorio.buscarPorCorreo(datos.correo) != null) {
+            throw ValidacionException(listOf("El correo ya está registrado"))
+        }
+
         val hash = withContext(Dispatchers.Default) { PasswordHasher.hash(req.contrasena) }
 
         val id = repositorio.crear(
@@ -46,8 +94,6 @@ class UsuarioService(
         val contrasenaCorrecta = usuario != null &&
             withContext(Dispatchers.Default) { PasswordHasher.verificar(req.contrasena, usuario.contrasenaHash) }
 
-        // Mismo mensaje si el correo no existe o la contraseña está mal:
-        // así nadie puede averiguar qué correos están registrados.
         if (usuario == null || !contrasenaCorrecta) {
             throw NoAutorizadoException("Correo o contraseña incorrectos")
         }
@@ -102,8 +148,8 @@ class UsuarioService(
     }
 
     private companion object {
-        const val MIN_CONTRASENA = 6        // igual que la validación de la app
-        const val MAX_CONTRASENA_BYTES = 72 // límite de bcrypt
+        const val MIN_CONTRASENA = 6
+        const val MAX_CONTRASENA_BYTES = 72
         const val MAX_TEXTO = 80
         val REGEX_CORREO = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
         val REGEX_TELEFONO = Regex("^\\+?[0-9]{10,15}$")

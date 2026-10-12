@@ -1,3 +1,16 @@
+package com.equipo4.nearhouse.api.usuarios
+
+import com.equipo4.nearhouse.api.auth.JwtService
+import com.equipo4.nearhouse.api.common.recibir
+import com.equipo4.nearhouse.api.common.usuarioId
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.auth.authenticate
+import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.route
+
 /**
  * Rutas de usuarios. Solo traducen HTTP <-> servicio:
  * leen el JSON, llaman al servicio y responden.
