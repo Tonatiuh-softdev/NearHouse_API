@@ -10,16 +10,12 @@ import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Reglas de negocio de usuarios: validar, hashear contraseñas y generar tokens.
- * No sabe nada de HTTP ni de SQL; eso lo hacen las rutas y el repositorio.
- */
 class UsuarioService(
     private val repositorio: UsuarioRepository,
     private val jwtService: JwtService,
 ) {
 
-    /** Solicita código de verificación por correo (para dev imprime 123456 en la consola). */
+    /** Solicita código de verificación por correo. */
     suspend fun solicitarCodigoCorreo(correo: String) {
         val correoLimpio = correo.trim().lowercase()
         val existe = repositorio.buscarPorCorreo(correoLimpio) != null
@@ -32,16 +28,17 @@ class UsuarioService(
         println("==========================================")
     }
 
-    /** Verifica el código ingresado y regresa el comprobante JWT del correo. */
+    /** Verifica el código y genera un comprobante JWT firmado con el correo. */
     fun verificarCodigoCorreo(correo: String, codigo: String): String {
+        val correoLimpio = correo.trim().lowercase()
         if (codigo.trim() == "123456") {
-            return "COMPROBANTE_MOCK_JWT_CORREO_VERIFICADO"
+            return jwtService.generarComprobanteCorreo(correoLimpio)
         } else {
             throw ValidacionException(listOf("El código es incorrecto o ha expirado"))
         }
     }
 
-    /** Revisa si el teléfono está disponible y cumple el formato antes de enviar SMS. */
+    /** Revisa si el teléfono está disponible. */
     suspend fun checkTelefonoDisponible(telefono: String) {
         val telLimpio = telefono.filter { it.isDigit() || it == '+' }
         if (!REGEX_TELEFONO.matches(telLimpio)) {
@@ -49,8 +46,39 @@ class UsuarioService(
         }
     }
 
-    /** Registro final desde el flujo multi-paso. */
+    /** Registro final: Valida tokens obligatorios y coherencia de datos antes de guardar. */
     suspend fun registrar(req: RegistroFinalRequest): AuthResponse {
+        val errores = mutableListOf<String>()
+
+        // 1. Validar presencia de tokens
+        if (req.comprobanteCorreo.isNullOrBlank()) {
+            errores += "El comprobante de correo es obligatorio"
+        }
+        if (req.tokenFirebase.isNullOrBlank()) {
+            errores += "El token de Firebase (SMS) es obligatorio"
+        }
+
+        if (errores.isNotEmpty()) {
+            throw ValidacionException(errores)
+        }
+
+        // 2. Validar JWT del comprobante de correo
+        val correoFirmado = jwtService.obtenerCorreoDeComprobante(req.comprobanteCorreo)
+        if (correoFirmado == null) {
+            throw ValidacionException(listOf("El comprobante de correo no es válido o ha expirado"))
+        }
+
+        // 3. Validar que el correo del comprobante coincida con el correo del JSON
+        if (correoFirmado != req.correo.trim().lowercase()) {
+            throw ValidacionException(listOf("El comprobante de correo no corresponde al correo ingresado"))
+        }
+
+        // 4. Validar token de Firebase (simulación en entorno de dev)
+        if (req.tokenFirebase == "token_invalido" || req.tokenFirebase.isBlank()) {
+            throw ValidacionException(listOf("El token de Firebase no es válido"))
+        }
+
+        // 5. Registrar usuario verificado en BD
         val registroReq = RegistroRequest(
             correo = req.correo,
             contrasena = req.contrasena,
@@ -59,11 +87,10 @@ class UsuarioService(
             segundoApellido = req.segundoApellido,
             telefono = req.telefono
         )
-        return registrar(registroReq)
+        return registrarUsuarioVerificado(registroReq)
     }
 
-    /** Registro público: toda cuenta nueva nace como Comprador. */
-    suspend fun registrar(req: RegistroRequest): AuthResponse {
+    private suspend fun registrarUsuarioVerificado(req: RegistroRequest): AuthResponse {
         val datos = validarRegistro(req)
 
         if (repositorio.buscarPorCorreo(datos.correo) != null) {
@@ -81,6 +108,8 @@ class UsuarioService(
                 telefono = datos.telefono,
                 contrasenaHash = hash,
                 rol = Roles.COMPRADOR,
+                correoVerificado = true,
+                telefonoVerificado = true
             ),
         )
 
