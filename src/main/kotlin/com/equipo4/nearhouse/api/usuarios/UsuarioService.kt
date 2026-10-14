@@ -10,6 +10,10 @@ import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/**
+ * Reglas de negocio de usuarios: validar, hashear contraseñas y generar tokens.
+ * No sabe nada de HTTP ni de SQL; eso lo hacen las rutas y el repositorio.
+ */
 class UsuarioService(
     private val repositorio: UsuarioRepository,
     private val jwtService: JwtService,
@@ -38,7 +42,7 @@ class UsuarioService(
         }
     }
 
-    /** Revisa si el teléfono está disponible. */
+    /** Revisa si el teléfono está disponible y cumple el formato antes de enviar SMS. */
     suspend fun checkTelefonoDisponible(telefono: String) {
         val telLimpio = telefono.filter { it.isDigit() || it == '+' }
         if (!REGEX_TELEFONO.matches(telLimpio)) {
@@ -46,11 +50,11 @@ class UsuarioService(
         }
     }
 
-    /** Registro final: Valida tokens obligatorios y coherencia de datos antes de guardar. */
+    /** Registro final desde el flujo multi-paso con validación obligatoria de comprobantes. */
     suspend fun registrar(req: RegistroFinalRequest): AuthResponse {
         val errores = mutableListOf<String>()
 
-        // 1. Validar presencia de tokens
+        // 1. Validar presencia de tokens obligatorios
         if (req.comprobanteCorreo.isNullOrBlank()) {
             errores += "El comprobante de correo es obligatorio"
         }
@@ -62,23 +66,22 @@ class UsuarioService(
             throw ValidacionException(errores)
         }
 
-        // 2. Validar JWT del comprobante de correo
+        // 2. Validar firma del JWT de comprobante de correo
         val correoFirmado = jwtService.obtenerCorreoDeComprobante(req.comprobanteCorreo)
         if (correoFirmado == null) {
             throw ValidacionException(listOf("El comprobante de correo no es válido o ha expirado"))
         }
 
-        // 3. Validar que el correo del comprobante coincida con el correo del JSON
+        // 3. Validar que el correo firmado coincida con el correo ingresado
         if (correoFirmado != req.correo.trim().lowercase()) {
             throw ValidacionException(listOf("El comprobante de correo no corresponde al correo ingresado"))
         }
 
-        // 4. Validar token de Firebase (simulación en entorno de dev)
+        // 4. Validar token de Firebase
         if (req.tokenFirebase == "token_invalido" || req.tokenFirebase.isBlank()) {
             throw ValidacionException(listOf("El token de Firebase no es válido"))
         }
 
-        // 5. Registrar usuario verificado en BD
         val registroReq = RegistroRequest(
             correo = req.correo,
             contrasena = req.contrasena,
@@ -87,10 +90,11 @@ class UsuarioService(
             segundoApellido = req.segundoApellido,
             telefono = req.telefono
         )
-        return registrarUsuarioVerificado(registroReq)
+        return registrar(registroReq)
     }
 
-    private suspend fun registrarUsuarioVerificado(req: RegistroRequest): AuthResponse {
+    /** Registro público: toda cuenta nueva nace como Comprador. */
+    suspend fun registrar(req: RegistroRequest): AuthResponse {
         val datos = validarRegistro(req)
 
         if (repositorio.buscarPorCorreo(datos.correo) != null) {
@@ -108,8 +112,6 @@ class UsuarioService(
                 telefono = datos.telefono,
                 contrasenaHash = hash,
                 rol = Roles.COMPRADOR,
-                correoVerificado = true,
-                telefonoVerificado = true
             ),
         )
 
