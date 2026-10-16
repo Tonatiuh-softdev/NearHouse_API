@@ -1,8 +1,4 @@
-# ------------------------------------------------------------
-# Imagen de la API SOLO para desarrollo local (docker compose).
-# Se llama Dockerfile.dev a propósito: si se llamara "Dockerfile",
-# Railway lo detectaría y desplegaría con Docker.
-# ------------------------------------------------------------
+
 
 # Etapa 1: compilar con el JDK completo
 FROM eclipse-temurin:21-jdk AS build
@@ -23,6 +19,8 @@ RUN ./gradlew --no-daemon buildFatJar
 # Etapa 2: imagen final ligera, solo con lo necesario para ejecutar
 FROM eclipse-temurin:21-jre
 WORKDIR /app
+RUN useradd --system --no-create-home nearhouse
 COPY --from=build /app/build/libs/nearhouse-api-all.jar app.jar
+USER nearhouse
 EXPOSE 8080
-CMD ["java", "-jar", "app.jar"]
+CMD ["java", "-XX:MaxRAMPercentage=75", "-jar", "app.jar"]
