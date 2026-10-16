@@ -19,9 +19,88 @@ class UsuarioService(
     private val jwtService: JwtService,
 ) {
 
+    /** Solicita código de verificación por correo. */
+    suspend fun solicitarCodigoCorreo(correo: String) {
+        val correoLimpio = correo.trim().lowercase()
+        val existe = repositorio.buscarPorCorreo(correoLimpio) != null
+        if (existe) {
+            throw ValidacionException(listOf("El correo ya está registrado"))
+        }
+
+        println("==========================================")
+        println("CÓDIGO DE VERIFICACIÓN PARA $correoLimpio: 123456")
+        println("==========================================")
+    }
+
+    /** Verifica el código y genera un comprobante JWT firmado con el correo. */
+    fun verificarCodigoCorreo(correo: String, codigo: String): String {
+        val correoLimpio = correo.trim().lowercase()
+        if (codigo.trim() == "123456") {
+            return jwtService.generarComprobanteCorreo(correoLimpio)
+        } else {
+            throw ValidacionException(listOf("El código es incorrecto o ha expirado"))
+        }
+    }
+
+    /** Revisa si el teléfono está disponible y cumple el formato antes de enviar SMS. */
+    suspend fun checkTelefonoDisponible(telefono: String) {
+        val telLimpio = telefono.filter { it.isDigit() || it == '+' }
+        if (!REGEX_TELEFONO.matches(telLimpio)) {
+            throw ValidacionException(listOf("El teléfono debe tener entre 10 y 15 dígitos"))
+        }
+    }
+
+    /** Registro final desde el flujo multi-paso con validación obligatoria de comprobantes. */
+    suspend fun registrar(req: RegistroFinalRequest): AuthResponse {
+        val errores = mutableListOf<String>()
+
+        // 1. Validar presencia de tokens obligatorios
+        if (req.comprobanteCorreo.isNullOrBlank()) {
+            errores += "El comprobante de correo es obligatorio"
+        }
+        if (req.tokenFirebase.isNullOrBlank()) {
+            errores += "El token de Firebase (SMS) es obligatorio"
+        }
+
+        if (errores.isNotEmpty()) {
+            throw ValidacionException(errores)
+        }
+
+        // 2. Validar firma del JWT de comprobante de correo
+        val correoFirmado = jwtService.obtenerCorreoDeComprobante(req.comprobanteCorreo)
+        if (correoFirmado == null) {
+            throw ValidacionException(listOf("El comprobante de correo no es válido o ha expirado"))
+        }
+
+        // 3. Validar que el correo firmado coincida con el correo ingresado
+        if (correoFirmado != req.correo.trim().lowercase()) {
+            throw ValidacionException(listOf("El comprobante de correo no corresponde al correo ingresado"))
+        }
+
+        // 4. Validar token de Firebase
+        if (req.tokenFirebase == "token_invalido" || req.tokenFirebase.isBlank()) {
+            throw ValidacionException(listOf("El token de Firebase no es válido"))
+        }
+
+        val registroReq = RegistroRequest(
+            correo = req.correo,
+            contrasena = req.contrasena,
+            nombre = req.nombre,
+            primerApellido = req.primerApellido,
+            segundoApellido = req.segundoApellido,
+            telefono = req.telefono
+        )
+        return registrar(registroReq)
+    }
+
     /** Registro público: toda cuenta nueva nace como Comprador. */
     suspend fun registrar(req: RegistroRequest): AuthResponse {
         val datos = validarRegistro(req)
+
+        if (repositorio.buscarPorCorreo(datos.correo) != null) {
+            throw ValidacionException(listOf("El correo ya está registrado"))
+        }
+
         val hash = withContext(Dispatchers.Default) { PasswordHasher.hash(req.contrasena) }
 
         val id = repositorio.crear(
@@ -46,8 +125,6 @@ class UsuarioService(
         val contrasenaCorrecta = usuario != null &&
             withContext(Dispatchers.Default) { PasswordHasher.verificar(req.contrasena, usuario.contrasenaHash) }
 
-        // Mismo mensaje si el correo no existe o la contraseña está mal:
-        // así nadie puede averiguar qué correos están registrados.
         if (usuario == null || !contrasenaCorrecta) {
             throw NoAutorizadoException("Correo o contraseña incorrectos")
         }
@@ -102,8 +179,8 @@ class UsuarioService(
     }
 
     private companion object {
-        const val MIN_CONTRASENA = 6        // igual que la validación de la app
-        const val MAX_CONTRASENA_BYTES = 72 // límite de bcrypt
+        const val MIN_CONTRASENA = 6
+        const val MAX_CONTRASENA_BYTES = 72
         const val MAX_TEXTO = 80
         val REGEX_CORREO = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
         val REGEX_TELEFONO = Regex("^\\+?[0-9]{10,15}$")

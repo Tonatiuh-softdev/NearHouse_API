@@ -5,6 +5,34 @@ import kotlinx.serialization.Serializable
 // ---------- Lo que la app MANDA ----------
 
 @Serializable
+data class RequestCodigoCorreo(
+    val correo: String
+)
+
+@Serializable
+data class VerifyCodigoCorreoRequest(
+    val correo: String,
+    val codigo: String
+)
+
+@Serializable
+data class CheckTelefonoRequest(
+    val telefono: String
+)
+
+@Serializable
+data class RegistroFinalRequest(
+    val correo: String,
+    val contrasena: String,
+    val nombre: String,
+    val primerApellido: String,
+    val segundoApellido: String? = null,
+    val telefono: String,
+    val comprobanteCorreo: String,
+    val tokenFirebase: String
+)
+
+@Serializable
 data class RegistroRequest(
     val correo: String,
     val contrasena: String,
@@ -21,6 +49,11 @@ data class LoginRequest(
 )
 
 // ---------- Lo que la API RESPONDE ----------
+
+@Serializable
+data class VerifyCodigoCorreoResponse(
+    val comprobanteCorreo: String
+)
 
 @Serializable
 data class UsuarioResponse(
