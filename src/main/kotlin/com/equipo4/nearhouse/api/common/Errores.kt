@@ -36,3 +36,6 @@ class ProhibidoException(message: String) : ApiException(HttpStatusCode.Forbidde
 class NoEncontradoException(message: String) : ApiException(HttpStatusCode.NotFound, message)
 
 class ConflictoException(message: String) : ApiException(HttpStatusCode.Conflict, message)
+
+class DemasiadosIntentosException(message: String) :
+    ApiException(HttpStatusCode.TooManyRequests, message)
