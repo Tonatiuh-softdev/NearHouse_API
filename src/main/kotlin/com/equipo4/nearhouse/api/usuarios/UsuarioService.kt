@@ -9,6 +9,8 @@ import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
+import com.equipo4.nearhouse.api.common.DemasiadosIntentosException
 
 /**
  * Reglas de negocio de usuarios: validar, hashear contraseñas y generar tokens.
@@ -121,15 +123,27 @@ class UsuarioService(
     }
 
     suspend fun iniciarSesion(req: LoginRequest): AuthResponse {
-        val usuario = repositorio.buscarPorCorreo(req.correo.trim())
+        val correo = req.correo.trim().lowercase()
+
+        // Si el correo está bloqueado, ni siquiera se revisa la contraseña
+        LoginAttemptTracker.minutosRestantes(correo)?.let { minutos ->
+            val unidad = if (minutos == 1) "minuto" else "minutos"
+            throw DemasiadosIntentosException("Demasiados intentos. Espera $minutos $unidad")
+        }
+
+        val usuario = repositorio.buscarPorCorreo(correo)
         val contrasenaCorrecta = usuario != null &&
             withContext(Dispatchers.Default) { PasswordHasher.verificar(req.contrasena, usuario.contrasenaHash) }
 
         if (usuario == null || !contrasenaCorrecta) {
+            LoginAttemptTracker.registrarFallo(correo) // también si el correo no existe
             throw NoAutorizadoException("Correo o contraseña incorrectos")
         }
+
+        LoginAttemptTracker.limpiar(correo)
+
         if (!usuario.activo) {
-            throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador.")
+            throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
         }
 
         return AuthResponse(token = jwtService.generarToken(usuario.id, usuario.rol), usuario = usuario.toResponse())
