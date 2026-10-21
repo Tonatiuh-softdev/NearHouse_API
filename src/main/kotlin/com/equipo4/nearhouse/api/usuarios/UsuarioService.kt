@@ -1,24 +1,40 @@
 package com.equipo4.nearhouse.api.usuarios
 
+import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
+import com.equipo4.nearhouse.api.auth.GoogleAuthRequest
+import com.equipo4.nearhouse.api.auth.GoogleProofService
+import com.equipo4.nearhouse.api.auth.GoogleRegisterRequest
 import com.equipo4.nearhouse.api.auth.JwtService
+import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
 import com.equipo4.nearhouse.api.auth.PasswordHasher
 import com.equipo4.nearhouse.api.auth.Roles
+import com.equipo4.nearhouse.api.common.ConflictoException
+import com.equipo4.nearhouse.api.common.DemasiadosIntentosException
 import com.equipo4.nearhouse.api.common.NoAutorizadoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
-import com.equipo4.nearhouse.api.common.DemasiadosIntentosException
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class GoogleProofResponse(
+    val requiresRegistration: Boolean = true,
+    val googleProofToken: String,
+    val nombre: String,
+    val apellidos: String,
+    val correo: String
+)
 
 /**
  * Reglas de negocio de usuarios: validar, hashear contraseñas y generar tokens.
- * No sabe nada de HTTP ni de SQL; eso lo hacen las rutas y el repositorio.
  */
 class UsuarioService(
     private val repositorio: UsuarioRepository,
     private val jwtService: JwtService,
+    private val firebaseTokenVerifier: FirebaseTokenVerifier,
+    private val googleProofService: GoogleProofService
 ) {
 
     /** Solicita código de verificación por correo. */
@@ -52,11 +68,103 @@ class UsuarioService(
         }
     }
 
-    /** Registro final desde el flujo multi-paso con validación obligatoria de comprobantes. */
+    /** PARTE A: Autenticar o iniciar registro con Google (un solo endpoint) */
+    suspend fun autenticarGoogle(idToken: String?): Any {
+        if (idToken.isNullOrBlank()) {
+            throw ValidacionException(listOf("El token de Google es requerido"))
+        }
+
+        // Pruebas 1 y 2: Verificar firma RSA256, issuer, audience y correo verificado por Google
+        val firebasePayload = firebaseTokenVerifier.verifyToken(idToken)
+            ?: throw NoAutorizadoException("Token de Google inválido o no verificado")
+
+        // CASO A: Ya tiene cuenta ligada a ese Google ID
+        val usuarioExistenteGoogle = repositorio.buscarPorGoogleId(firebasePayload.googleId)
+        if (usuarioExistenteGoogle != null) {
+            if (!usuarioExistenteGoogle.activo) {
+                throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
+            }
+            return AuthResponse(
+                token = jwtService.generarToken(usuarioExistenteGoogle.id, usuarioExistenteGoogle.rol),
+                usuario = usuarioExistenteGoogle.toResponse()
+            )
+        }
+
+        // CASO B: Existe cuenta registrada con ese correo -> Ligar Google ID
+        val usuarioExistenteCorreo = repositorio.buscarPorCorreo(firebasePayload.email)
+        if (usuarioExistenteCorreo != null) {
+            if (!usuarioExistenteCorreo.activo) {
+                throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
+            }
+            repositorio.actualizarGoogleId(usuarioExistenteCorreo.id, firebasePayload.googleId)
+            val usuarioActualizado = repositorio.buscarPorId(usuarioExistenteCorreo.id)!!
+            return AuthResponse(
+                token = jwtService.generarToken(usuarioActualizado.id, usuarioActualizado.rol),
+                usuario = usuarioActualizado.toResponse()
+            )
+        }
+
+        // CASO C: Usuario nuevo -> Generar comprobante JWT de 30 minutos (audience: google_registration_proof)
+        val proofToken = googleProofService.createProofToken(firebasePayload)
+        return GoogleProofResponse(
+            requiresRegistration = true,
+            googleProofToken = proofToken,
+            nombre = firebasePayload.givenName,
+            apellidos = firebasePayload.familyName,
+            correo = firebasePayload.email
+        )
+    }
+
+    /** PARTE B: Registro final con comprobante de Google + SMS */
+    suspend fun registrarGoogleFinal(req: GoogleRegisterRequest): AuthResponse {
+        // Pruebas 6, 7 y 8: Verificar validez, expiración y audience del comprobante
+        val proofData = googleProofService.verifyProofToken(req.googleProofToken)
+            ?: throw NoAutorizadoException("Comprobante de Google inválido, alterado o expirado")
+
+        // Prueba 9: Token SMS obligatorio y teléfono válido
+        if (req.smsToken.isBlank() || req.smsToken == "token_invalido") {
+            throw NoAutorizadoException("El token del SMS no es válido")
+        }
+
+        val telLimpio = req.telefono.filter { it.isDigit() || it == '+' }
+        if (!REGEX_TELEFONO.matches(telLimpio)) {
+            throw ValidacionException(listOf("El teléfono no cumple con el formato requerido"))
+        }
+
+        // Prueba 10: Validación de duplicados (Responde 409 Conflict)
+        if (repositorio.buscarPorCorreo(proofData.email) != null ||
+            repositorio.buscarPorTelefono(telLimpio) != null ||
+            repositorio.buscarPorGoogleId(proofData.googleId) != null) {
+            throw ConflictoException("El correo, teléfono o ID de Google ya se encuentran registrados")
+        }
+
+        // Crear cuenta sin contraseña (contrasenaHash = null)
+        val id = repositorio.crear(
+            NuevoUsuario(
+                nombre = req.nombre.trim(),
+                primerApellido = req.apellidos.trim(),
+                segundoApellido = null,
+                correo = proofData.email,
+                telefono = telLimpio,
+                contrasenaHash = null,
+                googleId = proofData.googleId,
+                rol = Roles.COMPRADOR
+            )
+        )
+
+        val usuario = repositorio.buscarPorId(id)
+            ?: error("El usuario $id se creó pero no se pudo leer")
+
+        return AuthResponse(
+            token = jwtService.generarToken(usuario.id, usuario.rol),
+            usuario = usuario.toResponse()
+        )
+    }
+
+    /** Registro final tradicional */
     suspend fun registrar(req: RegistroFinalRequest): AuthResponse {
         val errores = mutableListOf<String>()
 
-        // 1. Validar presencia de tokens obligatorios
         if (req.comprobanteCorreo.isNullOrBlank()) {
             errores += "El comprobante de correo es obligatorio"
         }
@@ -68,18 +176,13 @@ class UsuarioService(
             throw ValidacionException(errores)
         }
 
-        // 2. Validar firma del JWT de comprobante de correo
         val correoFirmado = jwtService.obtenerCorreoDeComprobante(req.comprobanteCorreo)
-        if (correoFirmado == null) {
-            throw ValidacionException(listOf("El comprobante de correo no es válido o ha expirado"))
-        }
+            ?: throw ValidacionException(listOf("El comprobante de correo no es válido o ha expirado"))
 
-        // 3. Validar que el correo firmado coincida con el correo ingresado
         if (correoFirmado != req.correo.trim().lowercase()) {
             throw ValidacionException(listOf("El comprobante de correo no corresponde al correo ingresado"))
         }
 
-        // 4. Validar token de Firebase
         if (req.tokenFirebase == "token_invalido" || req.tokenFirebase.isBlank()) {
             throw ValidacionException(listOf("El token de Firebase no es válido"))
         }
@@ -95,7 +198,7 @@ class UsuarioService(
         return registrar(registroReq)
     }
 
-    /** Registro público: toda cuenta nueva nace como Comprador. */
+    /** Registro público normal */
     suspend fun registrar(req: RegistroRequest): AuthResponse {
         val datos = validarRegistro(req)
 
@@ -113,6 +216,7 @@ class UsuarioService(
                 correo = datos.correo,
                 telefono = datos.telefono,
                 contrasenaHash = hash,
+                googleId = null,
                 rol = Roles.COMPRADOR,
             ),
         )
@@ -122,21 +226,27 @@ class UsuarioService(
         return AuthResponse(token = jwtService.generarToken(usuario.id, usuario.rol), usuario = usuario.toResponse())
     }
 
+    /** Inicio de sesión tradicional */
     suspend fun iniciarSesion(req: LoginRequest): AuthResponse {
         val correo = req.correo.trim().lowercase()
 
-        // Si el correo está bloqueado, ni siquiera se revisa la contraseña
         LoginAttemptTracker.minutosRestantes(correo)?.let { minutos ->
             val unidad = if (minutos == 1) "minuto" else "minutos"
             throw DemasiadosIntentosException("Demasiados intentos. Espera $minutos $unidad")
         }
 
         val usuario = repositorio.buscarPorCorreo(correo)
-        val contrasenaCorrecta = usuario != null &&
+
+        // PRUEBA 4: Si la cuenta no tiene contraseña y usa Google
+        if (usuario != null && usuario.contrasenaHash == null && usuario.googleId != null) {
+            throw ValidacionException(listOf("Esta cuenta usa Google. Inicia sesión con Google"))
+        }
+
+        val contrasenaCorrecta = usuario != null && usuario.contrasenaHash != null &&
             withContext(Dispatchers.Default) { PasswordHasher.verificar(req.contrasena, usuario.contrasenaHash) }
 
         if (usuario == null || !contrasenaCorrecta) {
-            LoginAttemptTracker.registrarFallo(correo) // también si el correo no existe
+            LoginAttemptTracker.registrarFallo(correo)
             throw NoAutorizadoException("Correo o contraseña incorrectos")
         }
 

@@ -1,5 +1,9 @@
 package com.equipo4.nearhouse.api.plugins
 
+import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
+import com.equipo4.nearhouse.api.auth.GoogleProofService
+import com.equipo4.nearhouse.api.auth.googleAuthRouting
+import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
 import com.equipo4.nearhouse.api.usuarios.usuarioRoutes
 import io.ktor.http.HttpStatusCode
@@ -21,6 +25,15 @@ data class HealthResponse(val estado: String, val baseDeDatos: String)
 
 /** Registra todas las rutas de la API. */
 fun Application.configureRouting(dataSource: DataSource, usuarioService: UsuarioService) {
+    // Instanciar los servicios requeridos para Google Auth
+    // (Asegúrate de que AppConfig tenga firebaseProjectId y jwtSecret, o léelos de System.getenv)
+    val firebaseVerifier = FirebaseTokenVerifier(
+        projectId = AppConfig.firebaseProjectId ?: System.getenv("FIREBASE_PROJECT_ID") ?: ""
+    )
+    val googleProofService = GoogleProofService(
+        jwtSecret = AppConfig.jwtSecret ?: System.getenv("JWT_SECRET") ?: ""
+    )
+
     routing {
         get("/") {
             call.respond(InfoResponse(nombre = "NearHouse API", version = "1.0.0"))
@@ -48,6 +61,13 @@ fun Application.configureRouting(dataSource: DataSource, usuarioService: Usuario
         // Todas las rutas de negocio viven bajo /api/v1
         route("/api/v1") {
             usuarioRoutes(usuarioService)
+            
+            // Rutas para autenticación y registro con Google
+            googleAuthRouting(
+                verifier = firebaseVerifier,
+                proofService = googleProofService,
+                usuarioService = usuarioService
+            )
         }
     }
 }

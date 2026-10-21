@@ -1,5 +1,7 @@
 package com.equipo4.nearhouse.api.usuarios
 
+import com.equipo4.nearhouse.api.auth.GoogleAuthRequest
+import com.equipo4.nearhouse.api.auth.GoogleRegisterRequest
 import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.common.recibir
 import com.equipo4.nearhouse.api.common.usuarioId
@@ -50,6 +52,20 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         post("/login") {
             val req = call.recibir<LoginRequest>()
             call.respond(service.iniciarSesion(req))
+        }
+
+        // 6. POST /api/v1/auth/google -> Entrada o inicio de registro con Google (un solo endpoint)
+        post("/google") {
+            val req = call.recibir<GoogleAuthRequest>()
+            val respuesta = service.autenticarGoogle(req.idToken)
+            call.respond(HttpStatusCode.OK, respuesta)
+        }
+
+        // 7. POST /api/v1/auth/register/google -> Registro final tras validar comprobante y SMS
+        post("/register/google") {
+            val req = call.recibir<GoogleRegisterRequest>()
+            val respuesta = service.registrarGoogleFinal(req)
+            call.respond(HttpStatusCode.Created, respuesta)
         }
     }
 

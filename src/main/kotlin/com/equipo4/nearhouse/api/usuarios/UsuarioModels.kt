@@ -78,7 +78,7 @@ data class AuthResponse(
 
 // ---------- Modelos internos (nunca se mandan a la app) ----------
 
-/** Un usuario tal como está en la base de datos, incluido el hash de su contraseña. */
+/** Un usuario tal como está en la base de datos. La contraseña es nula si se registró con Google. */
 data class Usuario(
     val id: Int,
     val nombre: String,
@@ -86,14 +86,15 @@ data class Usuario(
     val segundoApellido: String?,
     val correo: String,
     val telefono: String,
-    val contrasenaHash: String,
+    val contrasenaHash: String?,
+    val googleId: String?,
     val rol: String,
     val activo: Boolean,
     val correoVerificado: Boolean,
     val telefonoVerificado: Boolean,
     val fechaRegistro: String,
 ) {
-    /** Versión segura para responder: sin el hash de la contraseña. */
+    /** Versión segura para responder: sin el hash de la contraseña ni datos sensibles. */
     fun toResponse() = UsuarioResponse(
         id = id,
         nombre = nombre,
@@ -113,9 +114,12 @@ data class Usuario(
 data class NuevoUsuario(
     val nombre: String,
     val primerApellido: String,
-    val segundoApellido: String?,
+    val segundoApellido: String? = null,
     val correo: String,
     val telefono: String,
-    val contrasenaHash: String,
+    val contrasenaHash: String? = null,
+    val googleId: String? = null,
     val rol: String,
+    val correoVerificado: Boolean = false,
+    val telefonoVerificado: Boolean = false
 )

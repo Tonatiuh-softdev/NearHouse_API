@@ -1,5 +1,7 @@
 package com.equipo4.nearhouse.api
 
+import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
+import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
@@ -37,8 +39,24 @@ fun Application.module(config: AppConfig) {
 
     // Servicios
     val jwtService = JwtService(config)
+    
+    // Instancias para la verificación de Google y generación de comprobantes
+    val firebaseTokenVerifier = FirebaseTokenVerifier(
+        projectId = System.getenv("FIREBASE_PROJECT_ID") ?: ""
+    )
+    val googleProofService = GoogleProofService(
+        jwtSecret = System.getenv("JWT_SECRET") ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b"
+    )
+
     val usuarioRepository = UsuarioRepository(dataSource)
-    val usuarioService = UsuarioService(usuarioRepository, jwtService)
+    
+    // Se pasan los 4 parámetros requeridos por UsuarioService
+    val usuarioService = UsuarioService(
+        repositorio = usuarioRepository,
+        jwtService = jwtService,
+        firebaseTokenVerifier = firebaseTokenVerifier,
+        googleProofService = googleProofService
+    )
 
     // Plugins
     configureSerialization()

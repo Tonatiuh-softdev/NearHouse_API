@@ -54,6 +54,9 @@ dependencies {
 
     // Logs en consola
     implementation("ch.qos.logback:logback-classic:1.5.18")
+
+    implementation("com.auth0:java-jwt:4.4.0")
+    implementation("com.auth0:jwks-rsa:0.22.1")
 }
 
 // Compila para Java 21 (la versión que usan Docker y Railway)
