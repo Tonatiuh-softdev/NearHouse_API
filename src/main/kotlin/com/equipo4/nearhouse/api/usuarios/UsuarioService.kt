@@ -1,9 +1,7 @@
 package com.equipo4.nearhouse.api.usuarios
 
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
-import com.equipo4.nearhouse.api.auth.GoogleAuthRequest
 import com.equipo4.nearhouse.api.auth.GoogleProofService
-import com.equipo4.nearhouse.api.auth.GoogleRegisterRequest
 import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
 import com.equipo4.nearhouse.api.auth.PasswordHasher

@@ -1,8 +1,8 @@
 package com.equipo4.nearhouse.api.config
 
 /**
- * Toda la configuración sale de variables de entorno, así el mismo código
- * funciona en tu laptop, en Docker y en Railway sin cambios.
+ * Toda la configuración sale de variables de entorno (en Railway/Docker).
+ * Si no se detectan en local, utiliza la base de datos de Railway por defecto.
  */
 data class AppConfig(
     val port: Int,
@@ -10,27 +10,23 @@ data class AppConfig(
     val dbUser: String,
     val dbPassword: String,
     val jwtSecret: String,
+    val firebaseProjectId: String = "nearhouse-app",
     val jwtIssuer: String = "nearhouse-api",
     val jwtAudience: String = "nearhouse-app",
-    val jwtExpiracionHoras: Long = 24 * 7, // el token dura 7 días
+    val jwtExpiracionHoras: Long = 24 * 7 // el token dura 7 días
 ) {
     companion object {
         fun fromEnv(): AppConfig {
-            val jwtSecret = requerida("JWT_SECRET")
-            require(jwtSecret.length >= 32) {
-                "JWT_SECRET debe tener al menos 32 caracteres para que los tokens sean seguros."
-            }
             return AppConfig(
                 port = System.getenv("PORT")?.toIntOrNull() ?: 8080,
-                dbUrl = requerida("DB_URL"),
-                dbUser = requerida("DB_USER"),
-                dbPassword = requerida("DB_PASSWORD"),
-                jwtSecret = jwtSecret,
+                dbUrl = System.getenv("DB_URL") 
+                    ?: "jdbc:postgresql://tokaido.proxy.rlwy.net:20860/railway",
+                dbUser = System.getenv("DB_USER") ?: "postgres",
+                dbPassword = System.getenv("DB_PASSWORD") ?: "VKzTcRKmAsJJKuVVBpMtwhucSZAWTnLH",
+                jwtSecret = System.getenv("JWT_SECRET") 
+                    ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b",
+                firebaseProjectId = System.getenv("FIREBASE_PROJECT_ID") ?: "nearhouse-app"
             )
         }
-
-        private fun requerida(nombre: String): String =
-            System.getenv(nombre)?.takeIf { it.isNotBlank() }
-                ?: error("Falta la variable de entorno $nombre. Revisa tu archivo .env o las variables de Railway.")
     }
 }

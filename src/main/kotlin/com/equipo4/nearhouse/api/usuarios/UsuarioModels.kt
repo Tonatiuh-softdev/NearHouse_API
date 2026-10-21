@@ -5,6 +5,20 @@ import kotlinx.serialization.Serializable
 // ---------- Lo que la app MANDA ----------
 
 @Serializable
+data class GoogleAuthRequest(
+    val idToken: String? = null
+)
+
+@Serializable
+data class GoogleRegisterRequest(
+    val nombre: String,
+    val apellidos: String,
+    val telefono: String,
+    val googleProofToken: String,
+    val smsToken: String
+)
+
+@Serializable
 data class RequestCodigoCorreo(
     val correo: String
 )
