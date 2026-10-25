@@ -79,6 +79,11 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         }
     }
 
+        // GET /api/v1/planes -> público, planes activos del más barato al más caro
+        get("/planes") {
+            call.respond(service.listarPlanes())
+        }
+
     // Rutas que exigen token: Authorization: Bearer <token>
     authenticate(JwtService.AUTH_NAME) {
 
@@ -108,6 +113,12 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         get("/usuarios/me/foto") {
             val foto = service.obtenerFoto(call.usuarioId())
             call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
+        }
+
+        // POST /api/v1/usuarios/me/plan -> contrata o cambia de plan; regresa token nuevo
+        post("/usuarios/me/plan") {
+            val req = call.recibir<ContratarPlanRequest>()
+            call.respond(service.contratarPlan(call.usuarioId(), req))
         }
     }
 }

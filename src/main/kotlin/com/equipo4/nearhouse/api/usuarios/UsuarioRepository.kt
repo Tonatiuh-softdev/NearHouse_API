@@ -173,6 +173,75 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Planes activos, del más barato al más caro. */
+    suspend fun listarPlanes(): List<PlanResponse> = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(SELECT_PLANES).use { ps ->
+                ps.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            add(
+                                PlanResponse(
+                                    id = rs.getInt("pke_id_suscripcion"),
+                                    nombre = rs.getString("t_nombre_suscripcion"),
+                                    precio = rs.getInt("e_precio_suscripcion"),
+                                    duracionDias = rs.getInt("e_duracion_dias_suscripcion"),
+                                    limiteAnuncios = rs.getInt("e_limite_anuncios_suscripcion").let { if (rs.wasNull()) null else it },
+                                    nivelVisibilidad = rs.getInt("e_nivel_visibilidad_suscripcion"),
+                                    diasPrueba = rs.getInt("e_dias_prueba_suscripcion"),
+                                    destacado = rs.getBoolean("b_destacado_suscripcion")
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Guarda el plan, sus fechas, la prueba usada y el cambio de rol en una sola transacción. */
+    suspend fun contratarPlan(
+        usuarioId: Int,
+        plan: PlanResponse,
+        inicio: OffsetDateTime,
+        vencimiento: OffsetDateTime,
+        usarPrueba: Boolean,
+        pasarAVendedor: Boolean
+    ): Unit = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            try {
+                val sql = """
+                    UPDATE usuario
+                    SET fke_id_suscripcion = ?,
+                        fh_inicio_suscripcion_usuario = ?,
+                        fh_vencimiento_suscripcion_usuario = ?,
+                        b_prueba_gratis_usada_usuario = b_prueba_gratis_usada_usuario OR ?,
+                        fke_id_rol = CASE WHEN ? THEN
+                            (SELECT pke_id_rol FROM rol WHERE t_nombre_rol = 'Vendedor' AND b_estatus_rol)
+                            ELSE fke_id_rol END,
+                        fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                    WHERE pke_id_usuario = ?
+                """
+                conn.prepareStatement(sql).use { ps ->
+                    ps.setInt(1, plan.id)
+                    ps.setObject(2, inicio)
+                    ps.setObject(3, vencimiento)
+                    ps.setBoolean(4, usarPrueba)
+                    ps.setBoolean(5, pasarAVendedor)
+                    ps.setInt(6, usuarioId)
+                    ps.executeUpdate()
+                }
+                conn.commit()
+            } catch (e: Exception) {
+                conn.rollback()
+                throw e
+            } finally {
+                conn.autoCommit = true
+            }
+        }
+    }
+
     /** Convierte los errores de PostgreSQL en errores entendibles para la app. */
     private fun traducirError(e: SQLException): Exception {
         val restriccion = (e as? PSQLException)?.serverErrorMessage?.constraint
@@ -208,6 +277,11 @@ class UsuarioRepository(private val dataSource: DataSource) {
         fechaRegistro = getObject("fh_fecha_registro_usuario", OffsetDateTime::class.java).toString(),
         tieneFoto = getBoolean("b_tiene_foto"),
         fechaFoto = getObject("fh_fecha_foto_usuario", OffsetDateTime::class.java),
+        planId = getInt("fke_id_suscripcion").let { if (wasNull()) null else it },
+        planNombre = getString("t_nombre_suscripcion"),
+        planInicio = getObject("fh_inicio_suscripcion_usuario", OffsetDateTime::class.java),
+        planVencimiento = getObject("fh_vencimiento_suscripcion_usuario", OffsetDateTime::class.java),
+        pruebaUsada = getBoolean("b_prueba_gratis_usada_usuario"),
     )
 
     private companion object {
@@ -219,9 +293,22 @@ class UsuarioRepository(private val dataSource: DataSource) {
                    u.b_correo_verificado_usuario, u.b_telefono_verificado_usuario,
                    u.fh_fecha_registro_usuario, u.fh_fecha_foto_usuario,
                    (u.by_foto_usuario IS NOT NULL) AS b_tiene_foto,
+                   u.fke_id_suscripcion, s.t_nombre_suscripcion,
+                   u.fh_inicio_suscripcion_usuario, u.fh_vencimiento_suscripcion_usuario,
+                   u.b_prueba_gratis_usada_usuario,
                    r.t_nombre_rol
             FROM usuario u
             JOIN rol r ON r.pke_id_rol = u.fke_id_rol
+            LEFT JOIN suscripcion s ON s.pke_id_suscripcion = u.fke_id_suscripcion
+        """
+
+        const val SELECT_PLANES = """
+            SELECT pke_id_suscripcion, t_nombre_suscripcion, e_precio_suscripcion,
+                   e_duracion_dias_suscripcion, e_limite_anuncios_suscripcion,
+                   e_nivel_visibilidad_suscripcion, e_dias_prueba_suscripcion, b_destacado_suscripcion
+            FROM suscripcion
+            WHERE b_estatus_suscripcion = TRUE
+            ORDER BY e_precio_suscripcion
         """
 
         const val INSERT_USUARIO = """
