@@ -1,9 +1,0 @@
-# Los scripts de Linux siempre con saltos de línea LF (si no, fallan en Docker y Railway)
-gradlew text eol=lf
-*.sh text eol=lf
-
-# Los scripts de Windows con CRLF
-*.bat text eol=crlf
-
-# Archivos binarios
-*.jar binary
