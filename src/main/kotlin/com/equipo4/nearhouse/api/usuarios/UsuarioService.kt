@@ -15,6 +15,7 @@ import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import java.time.OffsetDateTime
 
 @Serializable
 data class GoogleProofResponse(
@@ -323,6 +324,46 @@ class UsuarioService(
 
     private fun coincide(b: ByteArray, desde: Int, firma: ByteArray): Boolean =
         firma.indices.all { b[desde + it] == firma[it] }
+
+    // ---------- Planes ----------
+
+    suspend fun listarPlanes(): List<PlanResponse> = repositorio.listarPlanes()
+
+    suspend fun contratarPlan(usuarioId: Int, req: ContratarPlanRequest): AuthResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        if (usuario.rol != "Comprador" && usuario.rol != "Vendedor") {
+            throw ProhibidoException("Solo compradores y vendedores pueden contratar un plan")
+        }
+
+        val plan = repositorio.listarPlanes().firstOrNull { it.id == req.planId }
+            ?: throw NoEncontradoException("El plan no existe o no está activo")
+
+        val ahora = OffsetDateTime.now()
+        val planVigente = usuario.planId == plan.id && usuario.planVencimiento?.isAfter(ahora) == true
+        if (planVigente) throw ConflictoException("Ya tienes este plan")
+
+        val usarPrueba = plan.diasPrueba > 0 && !usuario.pruebaUsada
+        val dias = if (usarPrueba) plan.diasPrueba else plan.duracionDias
+
+        repositorio.contratarPlan(
+            usuarioId = usuarioId,
+            plan = plan,
+            inicio = ahora,
+            vencimiento = ahora.plusDays(dias.toLong()),
+            usarPrueba = usarPrueba,
+            pasarAVendedor = usuario.rol == "Comprador"
+        )
+
+        // El rol va dentro del token, así que se genera uno nuevo
+        val actualizado = repositorio.buscarPorId(usuarioId)
+            ?: error("El usuario $usuarioId no se pudo leer después de contratar")
+        return AuthResponse(
+            token = jwtService.generarToken(actualizado.id, actualizado.rol),
+            usuario = actualizado.toResponse()
+        )
+    }
 
     // ---------- Validaciones ----------
 
