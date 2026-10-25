@@ -93,13 +93,41 @@ data class UsuarioResponse(
     val fechaRegistro: String,
     val tieneFoto: Boolean = false,
     // Milisegundos de la fecha de la foto. Sirve para no usar la foto vieja en caché.
-    val fotoVersion: String? = null
+    val fotoVersion: String? = null,
+    val plan: PlanUsuarioResponse? = null,
+    val pruebaDisponible: Boolean = false
 )
 
 @Serializable
 data class AuthResponse(
     val token: String,
     val usuario: UsuarioResponse,
+)
+
+@Serializable
+data class ContratarPlanRequest(
+    val planId: Int
+)
+
+@Serializable
+data class PlanResponse(
+    val id: Int,
+    val nombre: String,
+    val precio: Int,
+    val duracionDias: Int,
+    val limiteAnuncios: Int? = null,
+    val nivelVisibilidad: Int,
+    val diasPrueba: Int,
+    val destacado: Boolean
+)
+
+@Serializable
+data class PlanUsuarioResponse(
+    val id: Int,
+    val nombre: String,
+    val fechaInicio: String,
+    val fechaVencimiento: String,
+    val vigente: Boolean
 )
 
 // ---------- Modelos internos (nunca se mandan a la app) ----------
@@ -121,6 +149,11 @@ data class Usuario(
     val fechaRegistro: String,
     val tieneFoto: Boolean = false,
     val fechaFoto: OffsetDateTime? = null,
+    val planId: Int? = null,
+    val planNombre: String? = null,
+    val planInicio: OffsetDateTime? = null,
+    val planVencimiento: OffsetDateTime? = null,
+    val pruebaUsada: Boolean = false,
 ) {
     /** Versión segura para responder: sin el hash de la contraseña ni datos sensibles. */
     fun toResponse() = UsuarioResponse(
@@ -137,6 +170,22 @@ data class Usuario(
         fechaRegistro = fechaRegistro,
         tieneFoto = tieneFoto,
         fotoVersion = if (tieneFoto) fechaFoto?.toInstant()?.toEpochMilli()?.toString() else null,
+        plan = planId?.let { pid ->
+            val inicio = planInicio
+            val venc = planVencimiento
+            if (inicio != null && venc != null) {
+                PlanUsuarioResponse(
+                    id = pid,
+                    nombre = planNombre.orEmpty(),
+                    fechaInicio = inicio.toString(),
+                    fechaVencimiento = venc.toString(),
+                    vigente = venc.isAfter(OffsetDateTime.now())
+                )
+            } else {
+                null
+            }
+        },
+        pruebaDisponible = !pruebaUsada,
     )
 }
 
