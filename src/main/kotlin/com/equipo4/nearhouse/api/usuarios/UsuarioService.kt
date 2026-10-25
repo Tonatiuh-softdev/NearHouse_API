@@ -261,6 +261,69 @@ class UsuarioService(
         repositorio.buscarPorId(id)?.toResponse()
             ?: throw NoEncontradoException("Usuario no encontrado")
 
+    // ---------- Perfil propio (usuario del token) ----------
+
+    suspend fun actualizarPerfil(id: Int, req: ActualizarPerfilRequest): UsuarioResponse {
+        val errores = mutableListOf<String>()
+        validarTextoPerfil(req.nombre, "El nombre", obligatorio = true, errores)
+        validarTextoPerfil(req.primerApellido, "El primer apellido", obligatorio = true, errores)
+        val segundo = req.segundoApellido?.takeIf { it.isNotEmpty() }
+        if (segundo != null) {
+            validarTextoPerfil(segundo, "El segundo apellido", obligatorio = false, errores)
+        }
+        if (errores.isNotEmpty()) throw ValidacionException(errores)
+
+        repositorio.actualizarPerfil(id, req.nombre, req.primerApellido, segundo)
+        return obtenerPerfil(id)
+    }
+
+    suspend fun guardarFoto(id: Int, bytes: ByteArray): UsuarioResponse {
+        if (bytes.isEmpty()) throw ValidacionException(listOf("No se recibió ninguna imagen"))
+        if (bytes.size > MAX_FOTO_BYTES) {
+            throw ValidacionException(listOf("La foto no puede pesar más de 2 MB"))
+        }
+        // Se revisan los primeros bytes: no basta con confiar en la extensión o el tipo declarado
+        val tipo = detectarTipoImagen(bytes)
+            ?: throw ValidacionException(listOf("Solo se aceptan imágenes JPEG, PNG o WebP"))
+
+        repositorio.guardarFoto(id, bytes, tipo)
+        return obtenerPerfil(id)
+    }
+
+    suspend fun eliminarFoto(id: Int): UsuarioResponse {
+        repositorio.borrarFoto(id)
+        return obtenerPerfil(id)
+    }
+
+    suspend fun obtenerFoto(id: Int): FotoPerfil =
+        repositorio.buscarFoto(id) ?: throw NoEncontradoException("El usuario no tiene foto de perfil")
+
+    private fun validarTextoPerfil(
+        valor: String,
+        campo: String,
+        obligatorio: Boolean,
+        errores: MutableList<String>
+    ) {
+        if (obligatorio && valor.isBlank()) {
+            errores += "$campo es obligatorio"
+            return
+        }
+        if (valor.isEmpty()) return
+        if (valor != valor.trim()) errores += "$campo no puede tener espacios al inicio ni al final"
+        if (valor.length > MAX_TEXTO_PERFIL) errores += "$campo no puede pasar de $MAX_TEXTO_PERFIL caracteres"
+        if (!REGEX_TEXTO_PERFIL.matches(valor)) errores += "$campo solo puede tener letras y espacios"
+    }
+
+    private fun detectarTipoImagen(b: ByteArray): String? = when {
+        b.size >= 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() && b[2] == 0xFF.toByte() -> "image/jpeg"
+        b.size >= 8 && coincide(b, 0, FIRMA_PNG) -> "image/png"
+        b.size >= 12 && coincide(b, 0, FIRMA_RIFF) && coincide(b, 8, FIRMA_WEBP) -> "image/webp"
+        else -> null
+    }
+
+    private fun coincide(b: ByteArray, desde: Int, firma: ByteArray): Boolean =
+        firma.indices.all { b[desde + it] == firma[it] }
+
     // ---------- Validaciones ----------
 
     private data class DatosRegistro(
@@ -306,5 +369,12 @@ class UsuarioService(
         const val MAX_TEXTO = 80
         val REGEX_CORREO = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
         val REGEX_TELEFONO = Regex("^\\+?[0-9]{10,15}$")
+
+        const val MAX_TEXTO_PERFIL = 50
+        const val MAX_FOTO_BYTES = 2 * 1024 * 1024
+        val REGEX_TEXTO_PERFIL = Regex("^[A-Za-zÁÉÍÓÚÜáéíóúüÑñ ]+$")
+        val FIRMA_PNG = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val FIRMA_RIFF = "RIFF".toByteArray()
+        val FIRMA_WEBP = "WEBP".toByteArray()
     }
 }

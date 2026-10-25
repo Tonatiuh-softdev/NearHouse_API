@@ -1,15 +1,27 @@
 package com.equipo4.nearhouse.api.usuarios
 
 import com.equipo4.nearhouse.api.auth.JwtService
+import com.equipo4.nearhouse.api.common.ValidacionException
 import com.equipo4.nearhouse.api.common.recibir
 import com.equipo4.nearhouse.api.common.usuarioId
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.route
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 
 /**
  * Rutas de usuarios. Solo traducen HTTP <-> servicio:
@@ -69,9 +81,46 @@ fun Route.usuarioRoutes(service: UsuarioService) {
 
     // Rutas que exigen token: Authorization: Bearer <token>
     authenticate(JwtService.AUTH_NAME) {
+
         // GET /api/v1/usuarios/me -> datos del usuario que inició sesión
         get("/usuarios/me") {
             call.respond(service.obtenerPerfil(call.usuarioId()))
         }
+
+        // PATCH /api/v1/usuarios/me -> cambia nombre y apellidos (correo, teléfono y rol se ignoran)
+        patch("/usuarios/me") {
+            val req = call.recibir<ActualizarPerfilRequest>()
+            call.respond(service.actualizarPerfil(call.usuarioId(), req))
+        }
+
+        // PUT /api/v1/usuarios/me/foto -> sube la foto (multipart, campo "foto")
+        put("/usuarios/me/foto") {
+            val bytes = call.recibirFoto()
+            call.respond(service.guardarFoto(call.usuarioId(), bytes))
+        }
+
+        // DELETE /api/v1/usuarios/me/foto -> borra la foto
+        delete("/usuarios/me/foto") {
+            call.respond(service.eliminarFoto(call.usuarioId()))
+        }
+
+        // GET /api/v1/usuarios/me/foto -> regresa la imagen con su tipo (404 si no tiene)
+        get("/usuarios/me/foto") {
+            val foto = service.obtenerFoto(call.usuarioId())
+            call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
+        }
     }
+}
+
+/** Lee el archivo del campo "foto" de un formulario multipart. */
+private suspend fun ApplicationCall.recibirFoto(): ByteArray {
+    val multipart = receiveMultipart()
+    var bytes: ByteArray? = null
+    multipart.forEachPart { part ->
+        if (part is PartData.FileItem && part.name == "foto" && bytes == null) {
+            bytes = part.provider().readRemaining().readByteArray()
+        }
+        part.dispose()
+    }
+    return bytes ?: throw ValidacionException(listOf("Falta el archivo en el campo 'foto'"))
 }

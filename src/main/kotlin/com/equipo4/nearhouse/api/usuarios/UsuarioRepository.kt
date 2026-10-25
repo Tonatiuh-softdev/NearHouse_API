@@ -92,6 +92,87 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Cambia nombre y apellidos. Regresa true si encontró el usuario. */
+    suspend fun actualizarPerfil(
+        id: Int,
+        nombre: String,
+        primerApellido: String,
+        segundoApellido: String?
+    ): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET t_nombre_usuario = ?,
+                    t_primer_apellido_usuario = ?,
+                    t_segundo_apellido_usuario = ?,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, nombre)
+                ps.setString(2, primerApellido)
+                ps.setString(3, segundoApellido)
+                ps.setInt(4, id)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Guarda los bytes de la foto, su tipo y la fecha. */
+    suspend fun guardarFoto(id: Int, bytes: ByteArray, tipo: String): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET by_foto_usuario = ?,
+                    t_tipo_foto_usuario = ?,
+                    fh_fecha_foto_usuario = CURRENT_TIMESTAMP,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setBytes(1, bytes)
+                ps.setString(2, tipo)
+                ps.setInt(3, id)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Borra la foto, su tipo y su fecha. */
+    suspend fun borrarFoto(id: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET by_foto_usuario = NULL,
+                    t_tipo_foto_usuario = NULL,
+                    fh_fecha_foto_usuario = NULL,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, id)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Regresa la foto del usuario, o null si no tiene. */
+    suspend fun buscarFoto(id: Int): FotoPerfil? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                SELECT by_foto_usuario, t_tipo_foto_usuario
+                FROM usuario
+                WHERE pke_id_usuario = ? AND by_foto_usuario IS NOT NULL
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, id)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) FotoPerfil(rs.getBytes("by_foto_usuario"), rs.getString("t_tipo_foto_usuario")) else null
+                }
+            }
+        }
+    }
+
     /** Convierte los errores de PostgreSQL en errores entendibles para la app. */
     private fun traducirError(e: SQLException): Exception {
         val restriccion = (e as? PSQLException)?.serverErrorMessage?.constraint
@@ -125,15 +206,20 @@ class UsuarioRepository(private val dataSource: DataSource) {
         correoVerificado = getBoolean("b_correo_verificado_usuario"),
         telefonoVerificado = getBoolean("b_telefono_verificado_usuario"),
         fechaRegistro = getObject("fh_fecha_registro_usuario", OffsetDateTime::class.java).toString(),
+        tieneFoto = getBoolean("b_tiene_foto"),
+        fechaFoto = getObject("fh_fecha_foto_usuario", OffsetDateTime::class.java),
     )
 
     private companion object {
+        // b_tiene_foto se calcula en SQL para no traer los bytes de la foto en cada consulta
         const val SELECT_BASE = """
             SELECT u.pke_id_usuario, u.t_nombre_usuario, u.t_primer_apellido_usuario,
                    u.t_segundo_apellido_usuario, u.t_correo_usuario, u.t_telefono_usuario,
                    u.t_contrasena_usuario, u.t_google_id_usuario, u.b_estatus_usuario,
                    u.b_correo_verificado_usuario, u.b_telefono_verificado_usuario,
-                   u.fh_fecha_registro_usuario, r.t_nombre_rol
+                   u.fh_fecha_registro_usuario, u.fh_fecha_foto_usuario,
+                   (u.by_foto_usuario IS NOT NULL) AS b_tiene_foto,
+                   r.t_nombre_rol
             FROM usuario u
             JOIN rol r ON r.pke_id_rol = u.fke_id_rol
         """

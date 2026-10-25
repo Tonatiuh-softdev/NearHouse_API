@@ -1,6 +1,7 @@
 package com.equipo4.nearhouse.api.usuarios
 
 import kotlinx.serialization.Serializable
+import java.time.OffsetDateTime
 
 // ---------- Lo que la app MANDA ----------
 
@@ -62,6 +63,14 @@ data class LoginRequest(
     val contrasena: String,
 )
 
+/** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
+@Serializable
+data class ActualizarPerfilRequest(
+    val nombre: String,
+    val primerApellido: String,
+    val segundoApellido: String? = null
+)
+
 // ---------- Lo que la API RESPONDE ----------
 
 @Serializable
@@ -82,6 +91,9 @@ data class UsuarioResponse(
     val correoVerificado: Boolean,
     val telefonoVerificado: Boolean,
     val fechaRegistro: String,
+    val tieneFoto: Boolean = false,
+    // Milisegundos de la fecha de la foto. Sirve para no usar la foto vieja en caché.
+    val fotoVersion: String? = null
 )
 
 @Serializable
@@ -107,6 +119,8 @@ data class Usuario(
     val correoVerificado: Boolean,
     val telefonoVerificado: Boolean,
     val fechaRegistro: String,
+    val tieneFoto: Boolean = false,
+    val fechaFoto: OffsetDateTime? = null,
 ) {
     /** Versión segura para responder: sin el hash de la contraseña ni datos sensibles. */
     fun toResponse() = UsuarioResponse(
@@ -121,8 +135,13 @@ data class Usuario(
         correoVerificado = correoVerificado,
         telefonoVerificado = telefonoVerificado,
         fechaRegistro = fechaRegistro,
+        tieneFoto = tieneFoto,
+        fotoVersion = if (tieneFoto) fechaFoto?.toInstant()?.toEpochMilli()?.toString() else null,
     )
 }
+
+/** Foto de perfil tal como está guardada en la base de datos. */
+class FotoPerfil(val bytes: ByteArray, val tipo: String)
 
 /** Datos ya validados y limpios, listos para insertarse. */
 data class NuevoUsuario(
