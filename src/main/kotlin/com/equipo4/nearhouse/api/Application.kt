@@ -3,6 +3,8 @@ package com.equipo4.nearhouse.api
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
 import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
+import com.equipo4.nearhouse.api.colonias.ColoniaRepository
+import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
 import com.equipo4.nearhouse.api.plugins.configureMonitoring
@@ -58,10 +60,13 @@ fun Application.module(config: AppConfig) {
         googleProofService = googleProofService
     )
 
+    // Catálogo de colonias para el filtro de Ubicación
+    val coloniaService = ColoniaService(ColoniaRepository(dataSource))
+
     // Plugins
     configureSerialization()
     configureMonitoring()
     configureStatusPages()
     configureSecurity(jwtService)
-    configureRouting(dataSource, usuarioService)
+    configureRouting(dataSource, usuarioService, coloniaService)
 }
