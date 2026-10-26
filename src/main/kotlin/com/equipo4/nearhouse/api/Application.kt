@@ -46,10 +46,10 @@ fun Application.module(config: AppConfig) {
     
     // Instancias para la verificación de Google y generación de comprobantes
     val firebaseTokenVerifier = FirebaseTokenVerifier(
-        projectId = System.getenv("FIREBASE_PROJECT_ID") ?: ""
+        projectId = config.firebaseProjectId
     )
     val googleProofService = GoogleProofService(
-        jwtSecret = System.getenv("JWT_SECRET") ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b"
+        jwtSecret = config.jwtSecret
     )
 
     val usuarioRepository = UsuarioRepository(dataSource)

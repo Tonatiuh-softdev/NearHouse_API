@@ -41,6 +41,7 @@ class FirebaseTokenVerifier(private val projectId: String) {
             val emailVerified = verifiedJwt.getClaim("email_verified").asBoolean() ?: false
 
             if (signInProvider != "google.com" || !emailVerified) {
+                println("FirebaseTokenVerifier: signInProvider=$signInProvider, emailVerified=$emailVerified")
                 return null
             }
 
@@ -52,6 +53,7 @@ class FirebaseTokenVerifier(private val projectId: String) {
                 familyName = verifiedJwt.getClaim("family_name")?.asString() ?: ""
             )
         } catch (e: Exception) {
+            println("Error verificando Firebase Token con projectId '$projectId': ${e.message}")
             null
         }
     }
