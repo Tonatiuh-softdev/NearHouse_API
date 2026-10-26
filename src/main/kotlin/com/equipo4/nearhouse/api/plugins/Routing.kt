@@ -2,6 +2,8 @@ package com.equipo4.nearhouse.api.plugins
 
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.colonias.coloniaRoutes
+import com.equipo4.nearhouse.api.publicaciones.PublicacionService
+import com.equipo4.nearhouse.api.publicaciones.publicacionRoutes
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
 import com.equipo4.nearhouse.api.usuarios.usuarioRoutes
 import io.ktor.http.HttpStatusCode
@@ -26,6 +28,7 @@ fun Application.configureRouting(
     dataSource: DataSource,
     usuarioService: UsuarioService,
     coloniaService: ColoniaService,
+    publicacionService: PublicacionService,
 ) {
     routing {
         get("/") {
@@ -55,6 +58,7 @@ fun Application.configureRouting(
         route("/api/v1") {
             usuarioRoutes(usuarioService)
             coloniaRoutes(coloniaService)
+            publicacionRoutes(publicacionService)
         }
     }
 }

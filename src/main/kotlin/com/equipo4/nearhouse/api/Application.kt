@@ -12,6 +12,8 @@ import com.equipo4.nearhouse.api.plugins.configureRouting
 import com.equipo4.nearhouse.api.plugins.configureSecurity
 import com.equipo4.nearhouse.api.plugins.configureSerialization
 import com.equipo4.nearhouse.api.plugins.configureStatusPages
+import com.equipo4.nearhouse.api.publicaciones.PublicacionRepository
+import com.equipo4.nearhouse.api.publicaciones.PublicacionService
 import com.equipo4.nearhouse.api.usuarios.UsuarioRepository
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
 import io.ktor.server.application.Application
@@ -63,10 +65,13 @@ fun Application.module(config: AppConfig) {
     // Catálogo de colonias para el filtro de Ubicación
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
 
+    // Crear anuncios (con fotos)
+    val publicacionService = PublicacionService(PublicacionRepository(dataSource))
+
     // Plugins
     configureSerialization()
     configureMonitoring()
     configureStatusPages()
     configureSecurity(jwtService)
-    configureRouting(dataSource, usuarioService, coloniaService)
+    configureRouting(dataSource, usuarioService, coloniaService, publicacionService)
 }
