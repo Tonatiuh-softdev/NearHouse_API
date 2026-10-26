@@ -3,6 +3,8 @@ package com.equipo4.nearhouse.api
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
 import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
+import com.equipo4.nearhouse.api.colonias.ColoniaRepository
+import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
 import com.equipo4.nearhouse.api.plugins.configureMonitoring
@@ -10,6 +12,8 @@ import com.equipo4.nearhouse.api.plugins.configureRouting
 import com.equipo4.nearhouse.api.plugins.configureSecurity
 import com.equipo4.nearhouse.api.plugins.configureSerialization
 import com.equipo4.nearhouse.api.plugins.configureStatusPages
+import com.equipo4.nearhouse.api.publicaciones.PublicacionRepository
+import com.equipo4.nearhouse.api.publicaciones.PublicacionService
 import com.equipo4.nearhouse.api.usuarios.UsuarioRepository
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
 import io.ktor.server.application.Application
@@ -58,10 +62,16 @@ fun Application.module(config: AppConfig) {
         googleProofService = googleProofService
     )
 
+    // Catálogo de colonias para el filtro de Ubicación
+    val coloniaService = ColoniaService(ColoniaRepository(dataSource))
+
+    // Crear anuncios (con fotos)
+    val publicacionService = PublicacionService(PublicacionRepository(dataSource))
+
     // Plugins
     configureSerialization()
     configureMonitoring()
     configureStatusPages()
     configureSecurity(jwtService)
-    configureRouting(dataSource, usuarioService)
+    configureRouting(dataSource, usuarioService, coloniaService, publicacionService)
 }

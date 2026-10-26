@@ -1,5 +1,9 @@
 package com.equipo4.nearhouse.api.plugins
 
+import com.equipo4.nearhouse.api.colonias.ColoniaService
+import com.equipo4.nearhouse.api.colonias.coloniaRoutes
+import com.equipo4.nearhouse.api.publicaciones.PublicacionService
+import com.equipo4.nearhouse.api.publicaciones.publicacionRoutes
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
 import com.equipo4.nearhouse.api.usuarios.usuarioRoutes
 import io.ktor.http.HttpStatusCode
@@ -20,7 +24,12 @@ data class InfoResponse(val nombre: String, val version: String)
 data class HealthResponse(val estado: String, val baseDeDatos: String)
 
 /** Registra todas las rutas de la API. */
-fun Application.configureRouting(dataSource: DataSource, usuarioService: UsuarioService) {
+fun Application.configureRouting(
+    dataSource: DataSource,
+    usuarioService: UsuarioService,
+    coloniaService: ColoniaService,
+    publicacionService: PublicacionService,
+) {
     routing {
         get("/") {
             call.respond(InfoResponse(nombre = "NearHouse API", version = "1.0.0"))
@@ -48,6 +57,8 @@ fun Application.configureRouting(dataSource: DataSource, usuarioService: Usuario
         // Todas las rutas de negocio (incluidas /auth/google y /auth/register/google) viven bajo /api/v1
         route("/api/v1") {
             usuarioRoutes(usuarioService)
+            coloniaRoutes(coloniaService)
+            publicacionRoutes(publicacionService)
         }
     }
 }

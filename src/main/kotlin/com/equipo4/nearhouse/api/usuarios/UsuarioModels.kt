@@ -1,6 +1,7 @@
 package com.equipo4.nearhouse.api.usuarios
 
 import kotlinx.serialization.Serializable
+import java.time.OffsetDateTime
 
 // ---------- Lo que la app MANDA ----------
 
@@ -62,6 +63,14 @@ data class LoginRequest(
     val contrasena: String,
 )
 
+/** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
+@Serializable
+data class ActualizarPerfilRequest(
+    val nombre: String,
+    val primerApellido: String,
+    val segundoApellido: String? = null
+)
+
 // ---------- Lo que la API RESPONDE ----------
 
 @Serializable
@@ -82,12 +91,43 @@ data class UsuarioResponse(
     val correoVerificado: Boolean,
     val telefonoVerificado: Boolean,
     val fechaRegistro: String,
+    val tieneFoto: Boolean = false,
+    // Milisegundos de la fecha de la foto. Sirve para no usar la foto vieja en caché.
+    val fotoVersion: String? = null,
+    val plan: PlanUsuarioResponse? = null,
+    val pruebaDisponible: Boolean = false
 )
 
 @Serializable
 data class AuthResponse(
     val token: String,
     val usuario: UsuarioResponse,
+)
+
+@Serializable
+data class ContratarPlanRequest(
+    val planId: Int
+)
+
+@Serializable
+data class PlanResponse(
+    val id: Int,
+    val nombre: String,
+    val precio: Int,
+    val duracionDias: Int,
+    val limiteAnuncios: Int? = null,
+    val nivelVisibilidad: Int,
+    val diasPrueba: Int,
+    val destacado: Boolean
+)
+
+@Serializable
+data class PlanUsuarioResponse(
+    val id: Int,
+    val nombre: String,
+    val fechaInicio: String,
+    val fechaVencimiento: String,
+    val vigente: Boolean
 )
 
 // ---------- Modelos internos (nunca se mandan a la app) ----------
@@ -107,6 +147,13 @@ data class Usuario(
     val correoVerificado: Boolean,
     val telefonoVerificado: Boolean,
     val fechaRegistro: String,
+    val tieneFoto: Boolean = false,
+    val fechaFoto: OffsetDateTime? = null,
+    val planId: Int? = null,
+    val planNombre: String? = null,
+    val planInicio: OffsetDateTime? = null,
+    val planVencimiento: OffsetDateTime? = null,
+    val pruebaUsada: Boolean = false,
 ) {
     /** Versión segura para responder: sin el hash de la contraseña ni datos sensibles. */
     fun toResponse() = UsuarioResponse(
@@ -121,8 +168,29 @@ data class Usuario(
         correoVerificado = correoVerificado,
         telefonoVerificado = telefonoVerificado,
         fechaRegistro = fechaRegistro,
+        tieneFoto = tieneFoto,
+        fotoVersion = if (tieneFoto) fechaFoto?.toInstant()?.toEpochMilli()?.toString() else null,
+        plan = planId?.let { pid ->
+            val inicio = planInicio
+            val venc = planVencimiento
+            if (inicio != null && venc != null) {
+                PlanUsuarioResponse(
+                    id = pid,
+                    nombre = planNombre.orEmpty(),
+                    fechaInicio = inicio.toString(),
+                    fechaVencimiento = venc.toString(),
+                    vigente = venc.isAfter(OffsetDateTime.now())
+                )
+            } else {
+                null
+            }
+        },
+        pruebaDisponible = !pruebaUsada,
     )
 }
+
+/** Foto de perfil tal como está guardada en la base de datos. */
+class FotoPerfil(val bytes: ByteArray, val tipo: String)
 
 /** Datos ya validados y limpios, listos para insertarse. */
 data class NuevoUsuario(

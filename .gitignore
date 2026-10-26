@@ -9,7 +9,10 @@ build/
 out/
 
 # Secretos
+
 .env
+.env.*
+!.env.example
 
 # Sistema
 .DS_Store
