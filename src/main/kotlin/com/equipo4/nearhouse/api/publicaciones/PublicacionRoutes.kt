@@ -1,17 +1,25 @@
 package com.equipo4.nearhouse.api.publicaciones
 
 import com.equipo4.nearhouse.api.auth.JwtService
+import com.equipo4.nearhouse.api.common.ValidacionException
+import com.equipo4.nearhouse.api.common.recibir
 import com.equipo4.nearhouse.api.common.usuarioId
 import com.equipo4.nearhouse.api.common.usuarioRol
+import io.ktor.http.CacheControl
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
 import io.ktor.http.content.forEachPart
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receiveMultipart
+import io.ktor.server.response.cacheControl
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 
@@ -23,6 +31,13 @@ private const val MAX_FOTOS_LEIDAS = 6
  */
 fun Route.publicacionRoutes(service: PublicacionService) {
 
+    // GET /api/v1/fotos/{id} -> la imagen (pública, para que el home y el administrador la carguen con una URL)
+    get("/fotos/{id}") {
+        val foto = service.foto(call.idDeRuta())
+        call.response.cacheControl(CacheControl.MaxAge(maxAgeSeconds = 86400, visibility = CacheControl.Visibility.Public))
+        call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
+    }
+
     authenticate(JwtService.AUTH_NAME) {
 
         // POST /api/v1/publicaciones -> crea un anuncio (queda EN_REVISION)
@@ -33,8 +48,45 @@ fun Route.publicacionRoutes(service: PublicacionService) {
             val (datos, fotos) = call.recibirPublicacion()
             call.respond(HttpStatusCode.Created, service.crear(usuarioId, rol, datos, fotos))
         }
+
+        // GET /api/v1/publicaciones -> anuncios PUBLICADA y activos (el home)
+        get("/publicaciones") {
+            call.respond(service.listarPublicas())
+        }
+
+        // GET /api/v1/publicaciones/{id} -> un anuncio con los datos de contacto del vendedor
+        get("/publicaciones/{id}") {
+            call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol()))
+        }
+
+        route("/admin/publicaciones") {
+
+            // GET /api/v1/admin/publicaciones?estado=EN_REVISION -> cola del administrador (estado opcional)
+            get {
+                call.respond(service.listarParaAdmin(call.usuarioRol(), call.request.queryParameters["estado"]))
+            }
+
+            // GET /api/v1/admin/publicaciones/{id}
+            get("/{id}") {
+                call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol()))
+            }
+
+            // POST /api/v1/admin/publicaciones/{id}/aprobar -> EN_REVISION pasa a PUBLICADA
+            post("/{id}/aprobar") {
+                call.respond(service.aprobar(call.usuarioRol(), call.usuarioId(), call.idDeRuta()))
+            }
+
+            // POST /api/v1/admin/publicaciones/{id}/rechazar  {"motivo": "..."} -> pasa a RECHAZADA
+            post("/{id}/rechazar") {
+                val req = call.recibir<RechazarRequest>()
+                call.respond(service.rechazar(call.usuarioRol(), call.usuarioId(), call.idDeRuta(), req.motivo))
+            }
+        }
     }
 }
+
+private fun ApplicationCall.idDeRuta(): Int =
+    parameters["id"]?.toIntOrNull() ?: throw ValidacionException(listOf("El id no es válido"))
 
 /** Lee el JSON del campo "datos" y los archivos del campo "fotos", en el orden en que llegaron. */
 private suspend fun ApplicationCall.recibirPublicacion(): Pair<String?, List<ByteArray>> {

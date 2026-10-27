@@ -1,7 +1,9 @@
 package com.equipo4.nearhouse.api.publicaciones
 
 import com.equipo4.nearhouse.api.auth.Roles
+import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
+import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.serialization.json.Json
@@ -31,6 +33,61 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         if (errores.isNotEmpty()) throw ValidacionException(errores)
 
         return repositorio.crear(usuarioId, publicacion, fotosValidas)
+    }
+
+    // ---------- Consultas ----------
+
+    /** Anuncios publicados y activos: lo que muestra el home. */
+    suspend fun listarPublicas(): List<PublicacionResponse> = repositorio.listar(soloPublicadas = true, estado = null)
+
+    /** Un anuncio. Los no publicados solo los ve su dueño o un administrador. */
+    suspend fun obtener(id: Int, usuarioId: Int, rol: String): PublicacionResponse {
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val visible = (anuncio.estado == ESTADO_PUBLICADA && anuncio.activa) ||
+            anuncio.vendedor.id == usuarioId || rol in ROLES_ADMIN
+        if (!visible) throw NoEncontradoException("El anuncio no existe")
+        return anuncio
+    }
+
+    suspend fun foto(id: Int): FotoGuardada =
+        repositorio.buscarFoto(id) ?: throw NoEncontradoException("La foto no existe")
+
+    // ---------- Administrador ----------
+
+    suspend fun listarParaAdmin(rol: String, estado: String?): List<PublicacionResponse> {
+        exigirAdmin(rol)
+        val filtro = estado?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+        if (filtro != null && filtro !in ESTADOS) {
+            throw ValidacionException(listOf("El estado debe ser EN_REVISION, PUBLICADA o RECHAZADA"))
+        }
+        return repositorio.listar(soloPublicadas = false, estado = filtro)
+    }
+
+    suspend fun aprobar(rol: String, revisorId: Int, id: Int): PublicacionResponse {
+        exigirAdmin(rol)
+        revisar(id, revisorId, ESTADO_PUBLICADA, null)
+        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+    }
+
+    suspend fun rechazar(rol: String, revisorId: Int, id: Int, motivo: String): PublicacionResponse {
+        exigirAdmin(rol)
+        val limpio = motivo.trim()
+        if (limpio.length !in MIN_MOTIVO..MAX_MOTIVO) {
+            throw ValidacionException(listOf("El motivo debe tener entre $MIN_MOTIVO y $MAX_MOTIVO caracteres"))
+        }
+        revisar(id, revisorId, ESTADO_RECHAZADA, limpio)
+        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+    }
+
+    private suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?) {
+        if (!repositorio.revisar(id, revisorId, nuevoEstado, motivo)) {
+            if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
+            throw ConflictoException("Este anuncio ya fue revisado")
+        }
+    }
+
+    private fun exigirAdmin(rol: String) {
+        if (rol !in ROLES_ADMIN) throw ProhibidoException("Solo los administradores pueden revisar anuncios")
     }
 
     private fun leerDatos(datosJson: String?): CrearPublicacionRequest {
@@ -202,6 +259,12 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
 
     private companion object {
         val ROLES_PUBLICADORES = setOf(Roles.VENDEDOR, Roles.ADMINISTRADOR, Roles.SUPER_ADMINISTRADOR)
+        val ROLES_ADMIN = setOf(Roles.ADMINISTRADOR, Roles.SUPER_ADMINISTRADOR)
+        const val ESTADO_PUBLICADA = "PUBLICADA"
+        const val ESTADO_RECHAZADA = "RECHAZADA"
+        val ESTADOS = setOf("EN_REVISION", ESTADO_PUBLICADA, ESTADO_RECHAZADA)
+        const val MIN_MOTIVO = 10
+        const val MAX_MOTIVO = 500
         val TIPOS = setOf("DEPARTAMENTO", "CASA", "TERRENO")
         val USOS_SUELO = setOf("HABITACIONAL", "AGRICOLA")
         val REGEX_CODIGO_POSTAL = Regex("^[0-9]{5}$")
