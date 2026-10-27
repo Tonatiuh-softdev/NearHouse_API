@@ -10,9 +10,9 @@ data class AppConfig(
     val dbUser: String,
     val dbPassword: String,
     val jwtSecret: String,
-    val firebaseProjectId: String = "nearhouse-app",
+    val firebaseProjectId: String = "nearhouse-70367",
     val jwtIssuer: String = "nearhouse-api",
-    val jwtAudience: String = "nearhouse-app",
+    val jwtAudience: String = "nearhouse-70367",
     val jwtExpiracionHoras: Long = 24 * 7 // el token dura 7 días
 ) {
     companion object {
@@ -25,7 +25,7 @@ data class AppConfig(
                 dbPassword = System.getenv("DB_PASSWORD") ?: "VKzTcRKmAsJJKuVVBpMtwhucSZAWTnLH",
                 jwtSecret = System.getenv("JWT_SECRET") 
                     ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b",
-                firebaseProjectId = System.getenv("FIREBASE_PROJECT_ID") ?: "nearhouse-app"
+                firebaseProjectId = System.getenv("FIREBASE_PROJECT_ID") ?: "nearhouse-70367"
             )
         }
     }
