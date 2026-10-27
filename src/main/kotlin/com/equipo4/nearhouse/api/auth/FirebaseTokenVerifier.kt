@@ -15,7 +15,7 @@ data class FirebasePayload(
     val familyName: String
 )
 
-class FirebaseTokenVerifier(private val fallbackProjectId: String = "nearhouse-70367") {
+class FirebaseTokenVerifier(private val projectId: String = "nearhouse-70367") {
     private val jwkProvider = JwkProviderBuilder(
         URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com")
     )
@@ -30,9 +30,9 @@ class FirebaseTokenVerifier(private val fallbackProjectId: String = "nearhouse-7
 
             // Extraer el project ID del issuer del token si coincide con Firebase ("https://securetoken.google.com/<projectId>")
             val tokenProjectId = if (issuer.startsWith("https://securetoken.google.com/")) {
-                issuer.removePrefix("https://securetoken.google.com/").ifBlank { fallbackProjectId }
+                issuer.removePrefix("https://securetoken.google.com/").ifBlank { projectId }
             } else {
-                fallbackProjectId
+                projectId
             }
 
             val jwk = jwkProvider.get(jwt.keyId)
