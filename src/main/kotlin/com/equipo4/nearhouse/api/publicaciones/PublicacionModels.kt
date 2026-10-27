@@ -78,3 +78,65 @@ data class PublicacionNueva(
 )
 
 class FotoNueva(val bytes: ByteArray, val tipo: String)
+
+// ---------- Consulta de anuncios (home y administrador) ----------
+
+@Serializable
+data class VendedorResponse(
+    val id: Int,
+    val nombre: String,
+    val correo: String,
+    val telefono: String
+)
+
+/** Datos de la revisión del administrador (solo si el anuncio ya fue revisado). */
+@Serializable
+data class RevisionResponse(
+    val fecha: Long,
+    val revisor: String?,
+    val motivo: String?
+)
+
+/**
+ * Anuncio completo. Lo usan el home (solo anuncios PUBLICADA) y el administrador (todos).
+ * Las fotos van como ids: la imagen se pide a GET /api/v1/fotos/{id}.
+ * [superficie] solo viene en TERRENO (en casa y departamento va en la descripción).
+ */
+@Serializable
+data class PublicacionResponse(
+    val id: Int,
+    val titulo: String,
+    val descripcion: String,
+    val reglas: String?,
+    val precio: Double,
+    val modalidad: String,            // "Venta" o "Renta"
+    val tipo: String,                 // DEPARTAMENTO, CASA o TERRENO
+    val estado: String,               // EN_REVISION, PUBLICADA o RECHAZADA
+    val activa: Boolean,              // false = el dueño la dio de baja
+    val calle: String,
+    val numero: String,
+    val colonia: String,
+    val codigoPostal: String?,
+    val latitud: Double,
+    val longitud: Double,
+    val superficie: Int?,
+    val usoSuelo: String?,
+    val dormitorios: Int?,
+    val banos: Int?,
+    val cochera: Int?,
+    val piso: Int?,
+    val niveles: Int?,
+    val amueblado: Boolean,
+    val mascotas: Boolean,
+    val elevador: Boolean,
+    val patio: Boolean,
+    val fotos: List<Int>,
+    val vendedor: VendedorResponse,
+    val fechaRegistro: Long,
+    val revision: RevisionResponse?
+)
+
+@Serializable
+data class RechazarRequest(val motivo: String)
+
+class FotoGuardada(val bytes: ByteArray, val tipo: String)
