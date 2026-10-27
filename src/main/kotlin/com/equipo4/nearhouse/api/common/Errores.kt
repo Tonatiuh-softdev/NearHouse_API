@@ -39,3 +39,9 @@ class ConflictoException(message: String) : ApiException(HttpStatusCode.Conflict
 
 class DemasiadosIntentosException(message: String) :
     ApiException(HttpStatusCode.TooManyRequests, message)
+
+class ServicioNoDisponibleException(mensaje: String) :
+    ApiException(HttpStatusCode.ServiceUnavailable, mensaje)
+
+class DemasiadasSolicitudesException(mensaje: String) :
+    ApiException(HttpStatusCode.TooManyRequests, mensaje)

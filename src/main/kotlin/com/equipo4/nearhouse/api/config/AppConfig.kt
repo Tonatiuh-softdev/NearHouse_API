@@ -10,10 +10,14 @@ data class AppConfig(
     val dbUser: String,
     val dbPassword: String,
     val jwtSecret: String,
-    val firebaseProjectId: String = "nearhouse-app",
+    val firebaseProjectId: String = "nearhouse-70367",
     val jwtIssuer: String = "nearhouse-api",
     val jwtAudience: String = "nearhouse-app",
-    val jwtExpiracionHoras: Long = 24 * 7 // el token dura 7 días
+    val jwtExpiracionHoras: Long = 24 * 7, // el token dura 7 días
+
+    val apiBrevo: String,
+    val senderEmail: String,
+    val senderName: String
 ) {
     companion object {
         fun fromEnv(): AppConfig {
@@ -25,8 +29,15 @@ data class AppConfig(
                 dbPassword = System.getenv("DB_PASSWORD") ?: "VKzTcRKmAsJJKuVVBpMtwhucSZAWTnLH",
                 jwtSecret = System.getenv("JWT_SECRET") 
                     ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b",
-                firebaseProjectId = System.getenv("FIREBASE_PROJECT_ID") ?: "nearhouse-app"
+                firebaseProjectId = System.getenv("FIREBASE_PROJECT_ID") ?: "nearhouse-70367",
+                apiBrevo = opcional("BREVO_API_KEY"),
+                senderEmail = opcional("CORREO_REMITENTE"),
+                senderName = opcional("NOMBRE_REMITENTE").ifBlank { "NearHouse" },
             )
         }
+ 
+        /** Lee una variable de entorno; si no existe, regresa texto vacío en lugar de detener la API. */
+        private fun opcional(nombre: String): String =
+            System.getenv(nombre)?.trim() ?: ""
     }
 }
