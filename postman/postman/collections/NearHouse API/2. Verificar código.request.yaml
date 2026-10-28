@@ -1,0 +1,21 @@
+$kind: http-request
+description: Cambia 000000 por el código que llegó (o el de la terminal). Si es correcto, guarda el comprobanteCorreo para el registro.
+url: "{{baseUrl}}/api/v1/auth/verificar-codigo-correo"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "correo": "{{correo}}",
+      "codigo": "358120"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      if (pm.response.code === 200) {
+          pm.collectionVariables.set('comprobanteCorreo', pm.response.json().comprobanteCorreo);
+      }
+    language: text/javascript
+order: 3000

@@ -1,0 +1,13 @@
+$kind: http-request
+description: Manda un código de 6 dígitos al correo. En modo consola (CORREO_MODO_CONSOLA=true) el código aparece en la terminal de Docker, en la línea [MODO CONSOLA].
+url: "{{baseUrl}}/api/v1/auth/solicitar-codigo-correo"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "correo": "{{correo}}"
+    }
+order: 2000

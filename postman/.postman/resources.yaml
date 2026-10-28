@@ -1,0 +1,15 @@
+# Use this workspace to collaborate
+workspace:
+  id: b1678b17-9bbb-4a7f-840d-07d9d55bc9f6
+
+# Each entry here maps a local resource to one or more corresponding objects in Postman Cloud
+
+cloudResources:
+  collections:
+    ../postman/collections/NearHouse API: 8285ec49-142a-450f-800d-67cb8885b171
+
+# All resources in the `postman/` folder are automatically registered in Local View.
+# Point to additional files outside the `postman/` folder to register them individually. Example:
+#localResources:
+#  collections:
+#    - ../tests/E2E Test Collection/

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 package com.equipo4.nearhouse.api.config
 
 /**
@@ -42,4 +43,37 @@ data class AppConfig(
         private fun opcional(nombre: String): String =
             System.getenv(nombre)?.trim() ?: ""
     }
+=======
+package com.equipo4.nearhouse.api.config
+
+/**
+ * Toda la configuración sale de variables de entorno (en Railway/Docker).
+ * Si no se detectan en local, utiliza la base de datos de Railway por defecto.
+ */
+data class AppConfig(
+    val port: Int,
+    val dbUrl: String,
+    val dbUser: String,
+    val dbPassword: String,
+    val jwtSecret: String,
+    val firebaseProjectId: String = "nearhouse-70367",
+    val jwtIssuer: String = "nearhouse-api",
+    val jwtAudience: String = "nearhouse-70367",
+    val jwtExpiracionHoras: Long = 24 * 7 // el token dura 7 días
+) {
+    companion object {
+        fun fromEnv(): AppConfig {
+            return AppConfig(
+                port = System.getenv("PORT")?.toIntOrNull() ?: 8080,
+                dbUrl = System.getenv("DB_URL") 
+                    ?: "jdbc:postgresql://tokaido.proxy.rlwy.net:20860/railway",
+                dbUser = System.getenv("DB_USER") ?: "postgres",
+                dbPassword = System.getenv("DB_PASSWORD") ?: "VKzTcRKmAsJJKuVVBpMtwhucSZAWTnLH",
+                jwtSecret = System.getenv("JWT_SECRET") 
+                    ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b",
+                firebaseProjectId = System.getenv("FIREBASE_PROJECT_ID") ?: "nearhouse-70367"
+            )
+        }
+    }
+>>>>>>> b786d2b98756b1e5bf7cb15a1b47a42acbfaca39
 }

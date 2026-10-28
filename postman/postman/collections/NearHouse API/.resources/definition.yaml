@@ -1,0 +1,8 @@
+$kind: collection
+description: "Peticiones para probar la API de NearHouse. Cambia la variable baseUrl si la API no corre en localhost:8080. Para registrar: cambia las variables correo y telefono por unos que no estén registrados y corre 1, 2, 3 y 4 en orden."
+variables:
+  baseUrl: http://localhost:8080
+  correo: prueba1@correo.com
+  telefono: "+523140000001"
+  comprobanteCorreo: ""
+  token: ""

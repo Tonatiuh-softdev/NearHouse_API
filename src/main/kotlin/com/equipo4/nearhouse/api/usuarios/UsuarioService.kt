@@ -56,9 +56,6 @@ class UsuarioService(
         val correoLimpio = correo.trim().lowercase()
         codigos.verificar(correoLimpio, MotivoCodigo.REGISTRO, codigo) // si está mal, lanza el error
         return jwtService.generarComprobanteCorreo(correoLimpio)
-        if (repositorio.buscarPorTelefono(telLimpio) != null) {
-            throw ConflictoException("Ese teléfono ya está registrado")
-        }
     }
 
     /** Revisa si el teléfono está disponible y cumple el formato antes de enviar SMS. */
@@ -66,6 +63,9 @@ class UsuarioService(
         val telLimpio = telefono.filter { it.isDigit() || it == '+' }
         if (!REGEX_TELEFONO.matches(telLimpio)) {
             throw ValidacionException(listOf("El teléfono debe tener entre 10 y 15 dígitos"))
+        }
+        if (repositorio.buscarPorTelefono(telLimpio) != null) {
+            throw ConflictoException("Ese teléfono ya está registrado")
         }
     }
 
