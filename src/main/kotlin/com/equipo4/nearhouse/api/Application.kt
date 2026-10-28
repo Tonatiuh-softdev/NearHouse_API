@@ -47,7 +47,6 @@ fun Application.module(config: AppConfig) {
 
     // Servicios
     val jwtService = JwtService(config)
-<<<<<<< HEAD
 
     // Verificación de Google y comprobantes. Todo sale de config, no de System.getenv
     val firebaseTokenVerifier = FirebaseTokenVerifier(projectId = config.firebaseProjectId)
@@ -66,16 +65,6 @@ fun Application.module(config: AppConfig) {
 
     // UNO solo para toda la API: aquí viven los códigos pendientes
     val codigosCorreo = CodigosCorreo(config.jwtSecret)
-=======
-    
-    // Instancias para la verificación de Google y generación de comprobantes
-    val firebaseTokenVerifier = FirebaseTokenVerifier(
-        projectId = config.firebaseProjectId
-    )
-    val googleProofService = GoogleProofService(
-        jwtSecret = config.jwtSecret
-    )
->>>>>>> b786d2b98756b1e5bf7cb15a1b47a42acbfaca39
 
     val usuarioRepository = UsuarioRepository(dataSource)
 
