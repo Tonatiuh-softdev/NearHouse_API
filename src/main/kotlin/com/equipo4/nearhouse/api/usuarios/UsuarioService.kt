@@ -17,6 +17,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.time.OffsetDateTime
 
+import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
+import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
+import com.equipo4.nearhouse.api.verificacion.MotivoCodigo
+
 @Serializable
 data class GoogleProofResponse(
     val requiresRegistration: Boolean = true,
@@ -33,30 +37,25 @@ class UsuarioService(
     private val repositorio: UsuarioRepository,
     private val jwtService: JwtService,
     private val firebaseTokenVerifier: FirebaseTokenVerifier,
-    private val googleProofService: GoogleProofService
+    private val googleProofService: GoogleProofService,
+    private val codigos: CodigosCorreo,
+    private val enviador: EnviadorCorreo,
 ) {
 
-    /** Solicita código de verificación por correo. */
+    /** Manda un código de 6 dígitos al correo (si todavía no está registrado). */
     suspend fun solicitarCodigoCorreo(correo: String) {
         val correoLimpio = correo.trim().lowercase()
-        val existe = repositorio.buscarPorCorreo(correoLimpio) != null
-        if (existe) {
+        if (repositorio.buscarPorCorreo(correoLimpio) != null) {
             throw ValidacionException(listOf("El correo ya está registrado"))
         }
-
-        println("==========================================")
-        println("CÓDIGO DE VERIFICACIÓN PARA $correoLimpio: 123456")
-        println("==========================================")
+        codigos.generarYEnviar(correoLimpio, MotivoCodigo.REGISTRO, enviador)
     }
 
-    /** Verifica el código y genera un comprobante JWT firmado con el correo. */
+    /** Revisa el código. Si es correcto, regresa el comprobante JWT con el correo. */
     fun verificarCodigoCorreo(correo: String, codigo: String): String {
         val correoLimpio = correo.trim().lowercase()
-        if (codigo.trim() == "123456") {
-            return jwtService.generarComprobanteCorreo(correoLimpio)
-        } else {
-            throw ValidacionException(listOf("El código es incorrecto o ha expirado"))
-        }
+        codigos.verificar(correoLimpio, MotivoCodigo.REGISTRO, codigo) // si está mal, lanza el error
+        return jwtService.generarComprobanteCorreo(correoLimpio)
     }
 
     /** Revisa si el teléfono está disponible y cumple el formato antes de enviar SMS. */
@@ -64,6 +63,9 @@ class UsuarioService(
         val telLimpio = telefono.filter { it.isDigit() || it == '+' }
         if (!REGEX_TELEFONO.matches(telLimpio)) {
             throw ValidacionException(listOf("El teléfono debe tener entre 10 y 15 dígitos"))
+        }
+        if (repositorio.buscarPorTelefono(telLimpio) != null) {
+            throw ConflictoException("Ese teléfono ya está registrado")
         }
     }
 
@@ -120,14 +122,16 @@ class UsuarioService(
         val proofData = googleProofService.verifyProofToken(req.googleProofToken)
             ?: throw NoAutorizadoException("Comprobante de Google inválido, alterado o expirado")
 
-        // Prueba 9: Token SMS obligatorio y teléfono válido
-        if (req.smsToken.isBlank() || req.smsToken == "token_invalido") {
-            throw NoAutorizadoException("El token del SMS no es válido")
-        }
-
-        val telLimpio = req.telefono.filter { it.isDigit() || it == '+' }
-        if (!REGEX_TELEFONO.matches(telLimpio)) {
+        // Prueba 9: el teléfono debe venir verificado por SMS (token de Firebase)
+        val telEscrito = req.telefono.filter { it.isDigit() || it == '+' }
+        if (!REGEX_TELEFONO.matches(telEscrito)) {
             throw ValidacionException(listOf("El teléfono no cumple con el formato requerido"))
+        }
+        val telLimpio = withContext(Dispatchers.IO) {
+            firebaseTokenVerifier.verificarTelefono(req.smsToken)
+        } ?: throw NoAutorizadoException("La verificación por SMS no es válida o ya expiró")
+        if (soloDigitos(telLimpio) != soloDigitos(telEscrito)) {
+            throw ValidacionException(listOf("El número que verificaste por SMS no coincide con el que escribiste"))
         }
 
         // Prueba 10: Validación de duplicados (Responde 409 Conflict)
@@ -182,8 +186,12 @@ class UsuarioService(
             throw ValidacionException(listOf("El comprobante de correo no corresponde al correo ingresado"))
         }
 
-        if (req.tokenFirebase == "token_invalido" || req.tokenFirebase.isBlank()) {
-            throw ValidacionException(listOf("El token de Firebase no es válido"))
+        // El SMS: Firebase dice qué número se verificó, y debe ser el mismo que escribió el usuario
+        val telefonoVerificado = withContext(Dispatchers.IO) {
+            firebaseTokenVerifier.verificarTelefono(req.tokenFirebase)
+        } ?: throw ValidacionException(listOf("La verificación por SMS no es válida o ya expiró. Vuelve a intentarlo"))
+        if (soloDigitos(telefonoVerificado) != soloDigitos(req.telefono)) {
+            throw ValidacionException(listOf("El número que verificaste por SMS no coincide con el que escribiste"))
         }
 
         val registroReq = RegistroRequest(
@@ -192,13 +200,14 @@ class UsuarioService(
             nombre = req.nombre,
             primerApellido = req.primerApellido,
             segundoApellido = req.segundoApellido,
-            telefono = req.telefono
+            telefono = telefonoVerificado // se guarda como lo da Firebase: +52 y los 10 dígitos
         )
-        return registrar(registroReq)
+        // Correo y teléfono ya se comprobaron: la cuenta nace verificada
+        return registrar(registroReq, verificado = true)
     }
 
     /** Registro público normal */
-    suspend fun registrar(req: RegistroRequest): AuthResponse {
+    suspend fun registrar(req: RegistroRequest, verificado: Boolean = false): AuthResponse {
         val datos = validarRegistro(req)
 
         if (repositorio.buscarPorCorreo(datos.correo) != null) {
@@ -217,6 +226,8 @@ class UsuarioService(
                 contrasenaHash = hash,
                 googleId = null,
                 rol = Roles.COMPRADOR,
+                correoVerificado = verificado,
+                telefonoVerificado = verificado,
             ),
         )
 
@@ -405,6 +416,8 @@ class UsuarioService(
     }
 
     private companion object {
+        fun soloDigitos(texto: String) = texto.filter { it.isDigit() }
+
         const val MIN_CONTRASENA = 6
         const val MAX_CONTRASENA_BYTES = 72
         const val MAX_TEXTO = 80

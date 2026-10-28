@@ -1,0 +1,13 @@
+$kind: http-request
+description: 200 si el teléfono tiene buen formato y nadie lo tiene; 409 si ya está registrado.
+url: "{{baseUrl}}/api/v1/auth/check-telefono"
+method: POST
+headers:
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "telefono": "{{telefono}}"
+    }
+order: 4000
