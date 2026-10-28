@@ -37,7 +37,7 @@ interface EnviadorCorreo {
     suspend fun enviarCodigo(
         correo: String,
         codigo: String,
-        motivo: MotivoCodigo = MotivoCodigo.REGISTRO,
+        motivo: MotivoCodigo,
     ) = enviar(PlantillasCorreo.codigo(correo, codigo, motivo))
 }
 
@@ -97,7 +97,7 @@ class EnviadorCorreoBrevo(private val config: AppConfig) : EnviadorCorreo {
             log.error("Brevo respondió {}: {}", respuesta.statusCode(), respuesta.body())
             throw ServicioNoDisponibleException(MENSAJE_ERROR)
         }
-        log.info("Correo \"{}\" enviado a {}", mensaje.asunto, mensaje.para)
+        log.info("Correo enviado")
     }
 
     private companion object {

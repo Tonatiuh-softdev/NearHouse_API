@@ -17,6 +17,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.time.OffsetDateTime
 
+import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
+import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
+import com.equipo4.nearhouse.api.verificacion.MotivoCodigo
+
 @Serializable
 data class GoogleProofResponse(
     val requiresRegistration: Boolean = true,
@@ -33,29 +37,27 @@ class UsuarioService(
     private val repositorio: UsuarioRepository,
     private val jwtService: JwtService,
     private val firebaseTokenVerifier: FirebaseTokenVerifier,
-    private val googleProofService: GoogleProofService
+    private val googleProofService: GoogleProofService,
+    private val codigos: CodigosCorreo,
+    private val enviador: EnviadorCorreo,
 ) {
 
-    /** Solicita código de verificación por correo. */
+    /** Manda un código de 6 dígitos al correo (si todavía no está registrado). */
     suspend fun solicitarCodigoCorreo(correo: String) {
         val correoLimpio = correo.trim().lowercase()
-        val existe = repositorio.buscarPorCorreo(correoLimpio) != null
-        if (existe) {
+        if (repositorio.buscarPorCorreo(correoLimpio) != null) {
             throw ValidacionException(listOf("El correo ya está registrado"))
         }
-
-        println("==========================================")
-        println("CÓDIGO DE VERIFICACIÓN PARA $correoLimpio: 123456")
-        println("==========================================")
+        codigos.generarYEnviar(correoLimpio, MotivoCodigo.REGISTRO, enviador)
     }
 
-    /** Verifica el código y genera un comprobante JWT firmado con el correo. */
+    /** Revisa el código. Si es correcto, regresa el comprobante JWT con el correo. */
     fun verificarCodigoCorreo(correo: String, codigo: String): String {
         val correoLimpio = correo.trim().lowercase()
-        if (codigo.trim() == "123456") {
-            return jwtService.generarComprobanteCorreo(correoLimpio)
-        } else {
-            throw ValidacionException(listOf("El código es incorrecto o ha expirado"))
+        codigos.verificar(correoLimpio, MotivoCodigo.REGISTRO, codigo) // si está mal, lanza el error
+        return jwtService.generarComprobanteCorreo(correoLimpio)
+        if (repositorio.buscarPorTelefono(telLimpio) != null) {
+            throw ConflictoException("Ese teléfono ya está registrado")
         }
     }
 

@@ -17,7 +17,8 @@ data class AppConfig(
 
     val apiBrevo: String,
     val senderEmail: String,
-    val senderName: String
+    val senderName: String,
+    val correoModoConsola: Boolean = false
 ) {
     companion object {
         fun fromEnv(): AppConfig {
@@ -33,6 +34,7 @@ data class AppConfig(
                 apiBrevo = opcional("BREVO_API_KEY"),
                 senderEmail = opcional("CORREO_REMITENTE"),
                 senderName = opcional("NOMBRE_REMITENTE").ifBlank { "NearHouse" },
+                correoModoConsola = opcional("CORREO_MODO_CONSOLA").equals("true", ignoreCase = true),
             )
         }
  

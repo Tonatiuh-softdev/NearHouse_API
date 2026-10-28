@@ -12,6 +12,10 @@ import com.equipo4.nearhouse.api.plugins.configureSerialization
 import com.equipo4.nearhouse.api.plugins.configureStatusPages
 import com.equipo4.nearhouse.api.usuarios.UsuarioRepository
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
+import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
+import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
+import com.equipo4.nearhouse.api.verificacion.EnviadorCorreoBrevo
+import com.equipo4.nearhouse.api.verificacion.EnviadorCorreoConsola
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.engine.embeddedServer
@@ -39,23 +43,34 @@ fun Application.module(config: AppConfig) {
 
     // Servicios
     val jwtService = JwtService(config)
-    
-    // Instancias para la verificación de Google y generación de comprobantes
-    val firebaseTokenVerifier = FirebaseTokenVerifier(
-        projectId = System.getenv("FIREBASE_PROJECT_ID") ?: ""
-    )
-    val googleProofService = GoogleProofService(
-        jwtSecret = System.getenv("JWT_SECRET") ?: "FrQiKNtqFDsJLCiZWw6dUBO9GVaHCxm5luVO1R72gSjTkM8b"
-    )
+
+    // Verificación de Google y comprobantes. Todo sale de config, no de System.getenv
+    val firebaseTokenVerifier = FirebaseTokenVerifier(projectId = config.firebaseProjectId)
+    val googleProofService = GoogleProofService(jwtSecret = config.jwtSecret)
+
+    // Correo: Brevo si hay llave y remitente; consola solo si se pidió a propósito.
+    // Si no hay ninguno, la API no arranca, para que nunca se quede en modo consola en Railway.
+    val enviadorCorreo: EnviadorCorreo = when {
+        config.apiBrevo.isNotBlank() && config.senderEmail.isNotBlank() -> EnviadorCorreoBrevo(config)
+        config.correoModoConsola -> EnviadorCorreoConsola()
+        config.apiBrevo.isNotBlank() -> error("Falta CORREO_REMITENTE (el correo que validaste en Brevo).")
+        else -> error(
+            "Falta BREVO_API_KEY. Para probar sin mandar correos, pon CORREO_MODO_CONSOLA=true en tu .env."
+        )
+    }
+
+    // UNO solo para toda la API: aquí viven los códigos pendientes
+    val codigosCorreo = CodigosCorreo(config.jwtSecret)
 
     val usuarioRepository = UsuarioRepository(dataSource)
-    
-    // Se pasan los 4 parámetros requeridos por UsuarioService
+
     val usuarioService = UsuarioService(
         repositorio = usuarioRepository,
         jwtService = jwtService,
         firebaseTokenVerifier = firebaseTokenVerifier,
-        googleProofService = googleProofService
+        googleProofService = googleProofService,
+        codigos = codigosCorreo,
+        enviador = enviadorCorreo,
     )
 
     // Plugins
