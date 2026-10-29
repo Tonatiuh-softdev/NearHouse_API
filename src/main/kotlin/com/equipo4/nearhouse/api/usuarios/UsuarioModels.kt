@@ -7,7 +7,8 @@ import java.time.OffsetDateTime
 
 @Serializable
 data class GoogleAuthRequest(
-    val idToken: String? = null
+    val idToken: String? = null,
+    val reactivar: Boolean = false
 )
 
 @Serializable
@@ -61,6 +62,13 @@ data class RegistroRequest(
 data class LoginRequest(
     val correo: String,
     val contrasena: String,
+    val reactivar: Boolean = false
+)
+
+@Serializable
+data class DesactivarCuentaRequest(
+    val contrasena: String? = null,
+    val googleToken: String? = null
 )
 
 /** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
@@ -92,10 +100,10 @@ data class UsuarioResponse(
     val telefonoVerificado: Boolean,
     val fechaRegistro: String,
     val tieneFoto: Boolean = false,
-    // Milisegundos de la fecha de la foto. Sirve para no usar la foto vieja en caché.
     val fotoVersion: String? = null,
     val plan: PlanUsuarioResponse? = null,
-    val pruebaDisponible: Boolean = false
+    val pruebaDisponible: Boolean = false,
+    val desactivada: Boolean = false
 )
 
 @Serializable
@@ -154,6 +162,9 @@ data class Usuario(
     val planInicio: OffsetDateTime? = null,
     val planVencimiento: OffsetDateTime? = null,
     val pruebaUsada: Boolean = false,
+    val fechaDesactivacion: OffsetDateTime? = null,
+    val fechaEliminacionProgramada: OffsetDateTime? = null,
+    val versionSesion: Int = 1
 ) {
     /** Versión segura para responder: sin el hash de la contraseña ni datos sensibles. */
     fun toResponse() = UsuarioResponse(
@@ -186,6 +197,7 @@ data class Usuario(
             }
         },
         pruebaDisponible = !pruebaUsada,
+        desactivada = fechaDesactivacion != null
     )
 }
 

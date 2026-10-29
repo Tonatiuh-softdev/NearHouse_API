@@ -67,7 +67,7 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         // 6. POST /api/v1/auth/google -> Entrada o inicio de registro con Google (un solo endpoint)
         post("/google") {
             val req = call.recibir<GoogleAuthRequest>()
-            val respuesta = service.autenticarGoogle(req.idToken)
+            val respuesta = service.autenticarGoogle(req.idToken, req.reactivar)
             call.respond(HttpStatusCode.OK, respuesta)
         }
 
@@ -79,10 +79,10 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         }
     }
 
-        // GET /api/v1/planes -> público, planes activos del más barato al más caro
-        get("/planes") {
-            call.respond(service.listarPlanes())
-        }
+    // GET /api/v1/planes -> público, planes activos del más barato al más caro
+    get("/planes") {
+        call.respond(service.listarPlanes())
+    }
 
     // Rutas que exigen token: Authorization: Bearer <token>
     authenticate(JwtService.AUTH_NAME) {
@@ -96,6 +96,13 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         patch("/usuarios/me") {
             val req = call.recibir<ActualizarPerfilRequest>()
             call.respond(service.actualizarPerfil(call.usuarioId(), req))
+        }
+
+        // POST /api/v1/usuarios/me/desactivar -> desactiva la cuenta del usuario
+        post("/usuarios/me/desactivar") {
+            val req = call.recibir<DesactivarCuentaRequest>()
+            service.desactivarCuenta(call.usuarioId(), req)
+            call.respond(HttpStatusCode.NoContent)
         }
 
         // PUT /api/v1/usuarios/me/foto -> sube la foto (multipart, campo "foto")

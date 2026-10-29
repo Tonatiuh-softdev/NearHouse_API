@@ -361,7 +361,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
                         FROM foto f WHERE f.fke_id_propiedad = pr.pke_id_propiedad),
                        ARRAY[]::int[]
                    ) AS fotos
-            FROM publicacion p
+            FROM vw_publicacion_visible p
             JOIN modalidad m ON m.pke_id_modalidad = p.fke_id_modalidad
             JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
             JOIN colonia c ON c.pke_id_colonia = pr.fke_id_colonia

@@ -87,6 +87,6 @@ fun Application.module(config: AppConfig) {
     configureSerialization()
     configureMonitoring()
     configureStatusPages()
-    configureSecurity(jwtService)
+    configureSecurity(jwtService, usuarioRepository)
     configureRouting(dataSource, usuarioService, coloniaService, publicacionService)
 }

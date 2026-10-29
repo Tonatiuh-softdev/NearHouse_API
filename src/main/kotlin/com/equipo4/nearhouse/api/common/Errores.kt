@@ -3,11 +3,12 @@ package com.equipo4.nearhouse.api.common
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.Serializable
 
-/** Formato único de error que recibe la app: {"error": "...", "detalles": ["..."]} */
+/** Formato único de error que recibe la app: {"error": "...", "detalles": ["..."], "codigo": "..."} */
 @Serializable
 data class ErrorResponse(
     val error: String,
     val detalles: List<String> = emptyList(),
+    val codigo: String? = null
 )
 
 /**
@@ -18,6 +19,7 @@ open class ApiException(
     val status: HttpStatusCode,
     override val message: String,
     val detalles: List<String> = emptyList(),
+    val codigo: String? = null
 ) : RuntimeException(message)
 
 class ValidacionException(detalles: List<String>) :
@@ -36,6 +38,10 @@ class ProhibidoException(message: String) : ApiException(HttpStatusCode.Forbidde
 class NoEncontradoException(message: String) : ApiException(HttpStatusCode.NotFound, message)
 
 class ConflictoException(message: String) : ApiException(HttpStatusCode.Conflict, message)
+
+class CuentaDesactivadaException(
+    message: String = "Tu cuenta está desactivada. ¿Quieres reactivarla?"
+) : ApiException(HttpStatusCode.Conflict, message, codigo = "CUENTA_DESACTIVADA")
 
 class DemasiadosIntentosException(message: String) :
     ApiException(HttpStatusCode.TooManyRequests, message)

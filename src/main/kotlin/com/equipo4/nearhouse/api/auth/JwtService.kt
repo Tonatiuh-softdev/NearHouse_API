@@ -20,13 +20,14 @@ class JwtService(private val config: AppConfig) {
         .withAudience(config.jwtAudience)
         .build()
 
-    fun generarToken(usuarioId: Int, rol: String): String {
+    fun generarToken(usuarioId: Int, rol: String, versionSesion: Int = 1): String {
         val ahora = System.currentTimeMillis()
         return JWT.create()
             .withIssuer(config.jwtIssuer)
             .withAudience(config.jwtAudience)
             .withClaim(CLAIM_ID, usuarioId)
             .withClaim(CLAIM_ROL, rol)
+            .withClaim(CLAIM_VERSION, versionSesion)
             .withIssuedAt(Date(ahora))
             .withExpiresAt(Date(ahora + config.jwtExpiracionHoras * 3_600_000))
             .sign(algorithm)
@@ -60,5 +61,6 @@ class JwtService(private val config: AppConfig) {
         const val CLAIM_ID = "id"
         const val CLAIM_ROL = "rol"
         const val CLAIM_CORREO = "correo"
+        const val CLAIM_VERSION = "version"
     }
 }

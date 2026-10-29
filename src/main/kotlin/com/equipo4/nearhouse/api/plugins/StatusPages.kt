@@ -17,7 +17,7 @@ import io.ktor.server.response.respond
 fun Application.configureStatusPages() {
     install(StatusPages) {
         exception<ApiException> { call, cause ->
-            call.respond(cause.status, ErrorResponse(cause.message, cause.detalles))
+            call.respond(cause.status, ErrorResponse(cause.message, cause.detalles, cause.codigo))
         }
         exception<BadRequestException> { call, _ ->
             call.respond(

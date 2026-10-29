@@ -118,6 +118,39 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Desactiva la cuenta guardando la fecha actual e incrementando la versión de sesión. */
+    suspend fun desactivarCuenta(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET fh_desactivacion_usuario = CURRENT_TIMESTAMP,
+                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Reactiva una cuenta desactivada eliminando fh_desactivacion_usuario. */
+    suspend fun reactivarCuenta(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET fh_desactivacion_usuario = NULL,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
     /** Guarda los bytes de la foto, su tipo y la fecha. */
     suspend fun guardarFoto(id: Int, bytes: ByteArray, tipo: String): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
@@ -282,6 +315,9 @@ class UsuarioRepository(private val dataSource: DataSource) {
         planInicio = getObject("fh_inicio_suscripcion_usuario", OffsetDateTime::class.java),
         planVencimiento = getObject("fh_vencimiento_suscripcion_usuario", OffsetDateTime::class.java),
         pruebaUsada = getBoolean("b_prueba_gratis_usada_usuario"),
+        fechaDesactivacion = getObject("fh_desactivacion_usuario", OffsetDateTime::class.java),
+        fechaEliminacionProgramada = getObject("fh_eliminacion_programada_usuario", OffsetDateTime::class.java),
+        versionSesion = getInt("e_version_sesion_usuario").let { if (wasNull()) 1 else it }
     )
 
     private companion object {
@@ -296,7 +332,9 @@ class UsuarioRepository(private val dataSource: DataSource) {
                    u.fke_id_suscripcion, s.t_nombre_suscripcion,
                    u.fh_inicio_suscripcion_usuario, u.fh_vencimiento_suscripcion_usuario,
                    u.b_prueba_gratis_usada_usuario,
-                   r.t_nombre_rol
+                   r.t_nombre_rol,
+                   u.fh_desactivacion_usuario, u.fh_eliminacion_programada_usuario,
+                   u.e_version_sesion_usuario
             FROM usuario u
             JOIN rol r ON r.pke_id_rol = u.fke_id_rol
             LEFT JOIN suscripcion s ON s.pke_id_suscripcion = u.fke_id_suscripcion

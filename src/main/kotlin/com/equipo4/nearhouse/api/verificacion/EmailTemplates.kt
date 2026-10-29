@@ -58,6 +58,18 @@ object PlantillasCorreo {
             "No lo compartas con nadie. ${motivo.aviso}",
     )
 
+    /** Correo de aviso cuando se desactiva la cuenta. */
+    fun cuentaDesactivada(para: String) = MensajeCorreo(
+        para = para,
+        asunto = "Desactivaste tu cuenta de NearHouse",
+        html = diseno(
+            "Desactivaste tu cuenta",
+            "<p>Desactivaste tu cuenta de NearHouse. Tus anuncios ya no se ven.</p>" +
+                "<p>Para volver, solo inicia sesión en la app.</p>",
+        ),
+        texto = "Desactivaste tu cuenta de NearHouse. Tus anuncios ya no se ven. Para volver, solo inicia sesión en la app.",
+    )
+
     /** Ejemplo de correo sin código: aviso de que la cuenta ya se eliminó. */
     fun cuentaEliminada(para: String) = MensajeCorreo(
         para = para,
