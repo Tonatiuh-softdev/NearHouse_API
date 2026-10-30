@@ -40,6 +40,10 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
     /** Anuncios publicados y activos: lo que muestra el home. */
     suspend fun listarPublicas(): List<PublicacionResponse> = repositorio.listar(soloPublicadas = true, estado = null)
 
+    /** Mis anuncios: todos los del usuario, en cualquier estado (en revisión, publicados o rechazados). */
+    suspend fun listarMias(usuarioId: Int): List<PublicacionResponse> =
+        repositorio.listar(soloPublicadas = false, estado = null, usuarioId = usuarioId)
+
     /** Un anuncio. Los no publicados solo los ve su dueño o un administrador. */
     suspend fun obtener(id: Int, usuarioId: Int, rol: String): PublicacionResponse {
         val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")

@@ -51,17 +51,21 @@ class PublicacionRepository(private val dataSource: DataSource) {
     /**
      * Anuncios con todos sus datos, del más nuevo al más viejo (máximo 500).
      * [soloPublicadas] = lo que ve el público. [estado] filtra por estado de revisión.
+     * [usuarioId] deja solo los anuncios de ese vendedor (Mis anuncios).
      */
-    suspend fun listar(soloPublicadas: Boolean, estado: String?): List<PublicacionResponse> =
+    suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             val filtros = buildList {
                 if (soloPublicadas) add("p.t_estado_publicacion = 'PUBLICADA' AND p.b_estatus_publicacion")
                 if (estado != null) add("p.t_estado_publicacion = ?")
+                if (usuarioId != null) add("p.fke_id_usuario = ?")
             }
             val where = if (filtros.isEmpty()) "" else " WHERE " + filtros.joinToString(" AND ")
             dataSource.connection.use { conn ->
                 conn.prepareStatement("$SELECT_PUBLICACION$where ORDER BY p.fh_fecha_publicacion DESC LIMIT 500").use { ps ->
-                    if (estado != null) ps.setString(1, estado)
+                    var indice = 1
+                    if (estado != null) ps.setString(indice++, estado)
+                    if (usuarioId != null) ps.setInt(indice, usuarioId)
                     ps.executeQuery().use { rs ->
                         buildList { while (rs.next()) add(rs.toPublicacion()) }
                     }
@@ -361,7 +365,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
                         FROM foto f WHERE f.fke_id_propiedad = pr.pke_id_propiedad),
                        ARRAY[]::int[]
                    ) AS fotos
-            FROM vw_publicacion_visible p
+            FROM publicacion p
             JOIN modalidad m ON m.pke_id_modalidad = p.fke_id_modalidad
             JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
             JOIN colonia c ON c.pke_id_colonia = pr.fke_id_colonia
