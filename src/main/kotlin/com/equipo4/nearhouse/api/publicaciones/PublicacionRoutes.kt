@@ -54,6 +54,11 @@ fun Route.publicacionRoutes(service: PublicacionService) {
             call.respond(service.listarPublicas())
         }
 
+        // GET /api/v1/publicaciones/mias -> los anuncios del usuario con sesión, en cualquier estado
+        get("/publicaciones/mias") {
+            call.respond(service.listarMias(call.usuarioId()))
+        }
+
         // GET /api/v1/publicaciones/{id} -> un anuncio con los datos de contacto del vendedor
         get("/publicaciones/{id}") {
             call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol()))
