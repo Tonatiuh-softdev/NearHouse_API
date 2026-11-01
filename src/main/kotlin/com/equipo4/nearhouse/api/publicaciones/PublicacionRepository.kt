@@ -53,7 +53,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
      * [soloPublicadas] = lo que ve el público. [estado] filtra por estado de revisión.
      * [usuarioId] deja solo los anuncios de ese vendedor (Mis anuncios).
      */
-    suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
+   suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             val filtros = buildList {
                 if (soloPublicadas) add("p.t_estado_publicacion = 'PUBLICADA' AND p.b_estatus_publicacion")
@@ -61,8 +61,15 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 if (usuarioId != null) add("p.fke_id_usuario = ?")
             }
             val where = if (filtros.isEmpty()) "" else " WHERE " + filtros.joinToString(" AND ")
+            // El público lee de la vista de la migración 08: no incluye anuncios de cuentas
+            // desactivadas, suspendidas o por eliminarse
+            val base = if (soloPublicadas) {
+                SELECT_PUBLICACION.replace("FROM publicacion p", "FROM vw_publicacion_visible p")
+            } else {
+                SELECT_PUBLICACION
+            }
             dataSource.connection.use { conn ->
-                conn.prepareStatement("$SELECT_PUBLICACION$where ORDER BY p.fh_fecha_publicacion DESC LIMIT 500").use { ps ->
+                conn.prepareStatement("$base$where ORDER BY p.fh_fecha_publicacion DESC LIMIT 500").use { ps ->
                     var indice = 1
                     if (estado != null) ps.setString(indice++, estado)
                     if (usuarioId != null) ps.setInt(indice, usuarioId)
