@@ -53,7 +53,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
      * [soloPublicadas] = lo que ve el público. [estado] filtra por estado de revisión.
      * [usuarioId] deja solo los anuncios de ese vendedor (Mis anuncios).
      */
-   suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
+    suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             val filtros = buildList {
                 if (soloPublicadas) add("p.t_estado_publicacion = 'PUBLICADA' AND p.b_estatus_publicacion")
@@ -61,15 +61,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 if (usuarioId != null) add("p.fke_id_usuario = ?")
             }
             val where = if (filtros.isEmpty()) "" else " WHERE " + filtros.joinToString(" AND ")
-            // El público lee de la vista de la migración 08: no incluye anuncios de cuentas
-            // desactivadas, suspendidas o por eliminarse
-            val base = if (soloPublicadas) {
-                SELECT_PUBLICACION.replace("FROM publicacion p", "FROM vw_publicacion_visible p")
-            } else {
-                SELECT_PUBLICACION
-            }
             dataSource.connection.use { conn ->
-                conn.prepareStatement("$base$where ORDER BY p.fh_fecha_publicacion DESC LIMIT 500").use { ps ->
+                conn.prepareStatement("$SELECT_PUBLICACION$where ORDER BY p.fh_fecha_publicacion DESC LIMIT 500").use { ps ->
                     var indice = 1
                     if (estado != null) ps.setString(indice++, estado)
                     if (usuarioId != null) ps.setInt(indice, usuarioId)
@@ -381,4 +374,46 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     }
                 )
             )
-            "23503" -> ValidacionException(listOf("Falta un dato relacionado (usuario, modalidad o
+            "23503" -> ValidacionException(listOf("Falta un dato relacionado (usuario, modalidad o colonia)"))
+            else -> e
+        }
+    }
+
+    private companion object {
+        const val SELECT_PUBLICACION = """
+            SELECT p.pke_id_publicacion, p.fke_id_usuario, p.t_nombre_publicacion, p.t_descripcion_publicacion,
+                   p.t_reglas_publicacion, p.e_precio_publicacion, p.fh_fecha_publicacion,
+                   p.t_estado_publicacion, p.b_estatus_publicacion, p.t_motivo_rechazo_publicacion,
+                   p.fh_fecha_revision_publicacion,
+                   m.t_nombre_modalidad,
+                   pr.t_tipo_propiedad, pr.t_calle_propiedad, pr.t_numero_propiedad,
+                   pr.n_latitud_propiedad, pr.n_longitud_propiedad, pr.e_superficie_propiedad,
+                   pr.t_codigo_postal_propiedad,
+                   c.t_nombre_colonia,
+                   i.b_amueblado_inmueble, i.e_dormitorios_inmueble, i.e_banos_inmueble,
+                   i.b_mascotas_inmueble, i.e_cochera_inmueble, i.b_patio_inmueble,
+                   i.e_piso_inmueble, i.b_elevador_inmueble, i.e_niveles_inmueble,
+                   t.t_uso_suelo_terreno,
+                   u.t_nombre_usuario AS vendedor_nombre,
+                   u.t_primer_apellido_usuario AS vendedor_apellido1,
+                   u.t_segundo_apellido_usuario AS vendedor_apellido2,
+                   u.t_correo_usuario AS vendedor_correo,
+                   u.t_telefono_usuario AS vendedor_telefono,
+                   r.t_nombre_usuario AS revisor_nombre,
+                   r.t_primer_apellido_usuario AS revisor_apellido1,
+                   COALESCE(
+                       (SELECT array_agg(f.pke_id_foto ORDER BY f.e_orden_visibilidad_foto)
+                        FROM foto f WHERE f.fke_id_propiedad = pr.pke_id_propiedad),
+                       ARRAY[]::int[]
+                   ) AS fotos
+            FROM publicacion p
+            JOIN modalidad m ON m.pke_id_modalidad = p.fke_id_modalidad
+            JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
+            JOIN colonia c ON c.pke_id_colonia = pr.fke_id_colonia
+            LEFT JOIN inmueble i ON i.fke_id_propiedad = pr.pke_id_propiedad
+            LEFT JOIN terreno t ON t.fke_id_propiedad = pr.pke_id_propiedad
+            JOIN usuario u ON u.pke_id_usuario = p.fke_id_usuario
+            LEFT JOIN usuario r ON r.pke_id_usuario = p.fke_id_usuario_revision
+        """
+    }
+}
