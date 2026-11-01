@@ -12,6 +12,7 @@ import java.sql.SQLException
 import java.sql.Types
 import java.time.OffsetDateTime
 import javax.sql.DataSource
+import com.equipo4.nearhouse.api.common.NoEncontradoException
 
 /**
  * Única capa que habla con PostgreSQL para crear anuncios.
@@ -151,6 +152,135 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 }
             }
         }
+
+        /**
+     * Reemplaza los datos de un anuncio propio y lo manda otra vez a revisión.
+     * Todo en una transacción: si algo falla, el anuncio queda como estaba.
+     */
+    suspend fun editar(
+        id: Int,
+        usuarioId: Int,
+        p: PublicacionNueva,
+        fotosEliminar: List<Int>,
+        reemplazaPortada: Boolean,
+        fotosNuevas: List<FotoNueva>
+    ): Unit = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            try {
+                val modalidadId = buscarModalidad(conn, p.modalidad)
+                val coloniaId = obtenerColonia(conn, p.colonia)
+                actualizarPublicacion(conn, id, usuarioId, modalidadId, p)
+                val propiedadId = buscarPropiedad(conn, id)
+                actualizarPropiedad(conn, propiedadId, coloniaId, p)
+
+                // El detalle depende del tipo (inmueble o terreno): se borra el anterior y se guarda el nuevo
+                borrarDetalle(conn, "inmueble", propiedadId)
+                borrarDetalle(conn, "terreno", propiedadId)
+                if (p.inmueble != null) insertarInmueble(conn, propiedadId, p.inmueble)
+                if (p.usoSuelo != null) insertarTerreno(conn, propiedadId, p.usoSuelo)
+
+                borrarFotos(conn, propiedadId, fotosEliminar)
+                agregarFotos(conn, propiedadId, fotosNuevas, reemplazaPortada)
+                conn.commit()
+            } catch (e: Exception) {
+                conn.rollback()
+                throw if (e is SQLException) traducirError(e) else e
+            } finally {
+                conn.autoCommit = true
+            }
+        }
+    }
+
+    private fun actualizarPublicacion(conn: Connection, id: Int, usuarioId: Int, modalidadId: Int, p: PublicacionNueva) {
+        val filas = conn.prepareStatement(
+            """
+            UPDATE publicacion
+            SET fke_id_modalidad = ?, t_nombre_publicacion = ?, t_descripcion_publicacion = ?,
+                e_precio_publicacion = ?, t_reglas_publicacion = ?,
+                t_estado_publicacion = 'EN_REVISION', t_motivo_rechazo_publicacion = NULL,
+                fh_fecha_revision_publicacion = NULL, fke_id_usuario_revision = NULL,
+                fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP, fke_id_usuario_actualizacion = ?
+            WHERE pke_id_publicacion = ? AND fke_id_usuario = ?
+            """
+        ).use { ps ->
+            ps.setInt(1, modalidadId)
+            ps.setString(2, p.titulo)
+            ps.setString(3, p.descripcion)
+            ps.setBigDecimal(4, BigDecimal.valueOf(p.precio))
+            ps.setString(5, p.reglas)
+            ps.setInt(6, usuarioId)
+            ps.setInt(7, id)
+            ps.setInt(8, usuarioId)
+            ps.executeUpdate()
+        }
+        if (filas == 0) throw NoEncontradoException("El anuncio no existe")
+    }
+
+    private fun buscarPropiedad(conn: Connection, publicacionId: Int): Int =
+        conn.prepareStatement("SELECT pke_id_propiedad FROM propiedad WHERE fke_id_publicacion = ?").use { ps ->
+            ps.setInt(1, publicacionId)
+            ps.executeQuery().use { rs ->
+                if (rs.next()) rs.getInt(1) else throw NoEncontradoException("El anuncio no existe")
+            }
+        }
+
+    private fun actualizarPropiedad(conn: Connection, propiedadId: Int, coloniaId: Int, p: PublicacionNueva) {
+        conn.prepareStatement(
+            """
+            UPDATE propiedad
+            SET t_tipo_propiedad = ?, t_calle_propiedad = ?, t_numero_propiedad = ?,
+                n_latitud_propiedad = ?, n_longitud_propiedad = ?, fke_id_colonia = ?,
+                e_superficie_propiedad = ?, t_codigo_postal_propiedad = ?
+            WHERE pke_id_propiedad = ?
+            """
+        ).use { ps ->
+            ps.setString(1, p.tipo)
+            ps.setString(2, p.calle)
+            ps.setString(3, p.numero)
+            ps.setBigDecimal(4, BigDecimal.valueOf(p.latitud).setScale(6, RoundingMode.HALF_UP))
+            ps.setBigDecimal(5, BigDecimal.valueOf(p.longitud).setScale(6, RoundingMode.HALF_UP))
+            ps.setInt(6, coloniaId)
+            ps.setInt(7, p.superficie)
+            ps.setString(8, p.codigoPostal)
+            ps.setInt(9, propiedadId)
+            ps.executeUpdate()
+        }
+    }
+
+    /** [tabla] siempre es "inmueble" o "terreno" (valores fijos del código, nunca datos del usuario). */
+    private fun borrarDetalle(conn: Connection, tabla: String, propiedadId: Int) {
+        conn.prepareStatement("DELETE FROM $tabla WHERE fke_id_propiedad = ?").use { ps ->
+            ps.setInt(1, propiedadId)
+            ps.executeUpdate()
+        }
+    }
+
+    private fun borrarFotos(conn: Connection, propiedadId: Int, ids: List<Int>) {
+        if (ids.isEmpty()) return
+        conn.prepareStatement("DELETE FROM foto WHERE fke_id_propiedad = ? AND pke_id_foto = ANY(?)").use { ps ->
+            ps.setInt(1, propiedadId)
+            ps.setArray(2, conn.createArrayOf("integer", ids.toTypedArray<Any?>()))
+            ps.executeUpdate()
+        }
+    }
+
+    /**
+     * Las fotos que se quedan conservan su lugar. Las nuevas ocupan lugares libres; si no se reemplaza la portada,
+     * van después de la portada actual para no quitarle su lugar.
+     */
+    private fun agregarFotos(conn: Connection, propiedadId: Int, nuevas: List<FotoNueva>, reemplazaPortada: Boolean) {
+        if (nuevas.isEmpty()) return
+        val usados = conn.prepareStatement("SELECT e_orden_visibilidad_foto FROM foto WHERE fke_id_propiedad = ?").use { ps ->
+            ps.setInt(1, propiedadId)
+            ps.executeQuery().use { rs -> buildSet { while (rs.next()) add(rs.getInt(1)) } }
+        }
+        val libres = (1..MAX_FOTOS_ANUNCIO).filter { it !in usados }
+        val portada = usados.minOrNull()
+        val destinos = if (reemplazaPortada || portada == null) libres else libres.filter { it > portada }
+        if (destinos.size < nuevas.size) throw ValidacionException(listOf("No hay espacio para agregar más fotos"))
+        nuevas.forEachIndexed { i, foto -> insertarFoto(conn, propiedadId, destinos[i], foto) }
+    }
 
     suspend fun buscarFoto(id: Int): FotoGuardada? = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->

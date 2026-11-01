@@ -35,7 +35,12 @@ data class CrearPublicacionRequest(
     val mascotas: Boolean = false,    // solo al rentar
     val elevador: Boolean = false,    // solo DEPARTAMENTO
     val patio: Boolean = false,       // solo CASA (jardín/patio)
-    val usoSuelo: String? = null      // solo TERRENO: HABITACIONAL o AGRICOLA
+    val usoSuelo: String? = null,     // solo TERRENO: HABITACIONAL o AGRICOLA
+    // ---- Solo al editar ----
+    /** Ids de las fotos actuales que se quitan. */
+    val fotosEliminar: List<Int> = emptyList(),
+    /** True = la primera foto nueva reemplaza a la portada actual. */
+    val reemplazaPortada: Boolean = false
 )
 
 /** Pausar (false) o reactivar (true) un anuncio. */
