@@ -111,6 +111,47 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
+    // ---------- Acciones del vendedor sobre sus anuncios ----------
+
+    /** Pausa o reactiva un anuncio. Regresa false si no existe o no es de ese usuario. */
+    suspend fun cambiarActiva(id: Int, usuarioId: Int, activa: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { conn ->
+                conn.prepareStatement(
+                    """
+                    UPDATE publicacion
+                    SET b_estatus_publicacion = ?,
+                        fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
+                        fke_id_usuario_actualizacion = ?
+                    WHERE pke_id_publicacion = ? AND fke_id_usuario = ?
+                    """
+                ).use { ps ->
+                    ps.setBoolean(1, activa)
+                    ps.setInt(2, usuarioId)
+                    ps.setInt(3, id)
+                    ps.setInt(4, usuarioId)
+                    ps.executeUpdate() > 0
+                }
+            }
+        }
+
+    /**
+     * Borra el anuncio de verdad. La propiedad, las fotos y los reportes se borran en cascada.
+     * Regresa false si no existe o no es de ese usuario.
+     */
+    suspend fun eliminar(id: Int, usuarioId: Int): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { conn ->
+                conn.prepareStatement(
+                    "DELETE FROM publicacion WHERE pke_id_publicacion = ? AND fke_id_usuario = ?"
+                ).use { ps ->
+                    ps.setInt(1, id)
+                    ps.setInt(2, usuarioId)
+                    ps.executeUpdate() > 0
+                }
+            }
+        }
+
     suspend fun buscarFoto(id: Int): FotoGuardada? = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
             conn.prepareStatement("SELECT by_imagen_foto, t_tipo_imagen_foto FROM foto WHERE pke_id_foto = ?").use { ps ->
@@ -333,46 +374,4 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     }
                 )
             )
-            "23503" -> ValidacionException(listOf("Falta un dato relacionado (usuario, modalidad o colonia)"))
-            else -> e
-        }
-    }
-
-    private companion object {
-        const val SELECT_PUBLICACION = """
-            SELECT p.pke_id_publicacion, p.fke_id_usuario, p.t_nombre_publicacion, p.t_descripcion_publicacion,
-                   p.t_reglas_publicacion, p.e_precio_publicacion, p.fh_fecha_publicacion,
-                   p.t_estado_publicacion, p.b_estatus_publicacion, p.t_motivo_rechazo_publicacion,
-                   p.fh_fecha_revision_publicacion,
-                   m.t_nombre_modalidad,
-                   pr.t_tipo_propiedad, pr.t_calle_propiedad, pr.t_numero_propiedad,
-                   pr.n_latitud_propiedad, pr.n_longitud_propiedad, pr.e_superficie_propiedad,
-                   pr.t_codigo_postal_propiedad,
-                   c.t_nombre_colonia,
-                   i.b_amueblado_inmueble, i.e_dormitorios_inmueble, i.e_banos_inmueble,
-                   i.b_mascotas_inmueble, i.e_cochera_inmueble, i.b_patio_inmueble,
-                   i.e_piso_inmueble, i.b_elevador_inmueble, i.e_niveles_inmueble,
-                   t.t_uso_suelo_terreno,
-                   u.t_nombre_usuario AS vendedor_nombre,
-                   u.t_primer_apellido_usuario AS vendedor_apellido1,
-                   u.t_segundo_apellido_usuario AS vendedor_apellido2,
-                   u.t_correo_usuario AS vendedor_correo,
-                   u.t_telefono_usuario AS vendedor_telefono,
-                   r.t_nombre_usuario AS revisor_nombre,
-                   r.t_primer_apellido_usuario AS revisor_apellido1,
-                   COALESCE(
-                       (SELECT array_agg(f.pke_id_foto ORDER BY f.e_orden_visibilidad_foto)
-                        FROM foto f WHERE f.fke_id_propiedad = pr.pke_id_propiedad),
-                       ARRAY[]::int[]
-                   ) AS fotos
-            FROM publicacion p
-            JOIN modalidad m ON m.pke_id_modalidad = p.fke_id_modalidad
-            JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
-            JOIN colonia c ON c.pke_id_colonia = pr.fke_id_colonia
-            LEFT JOIN inmueble i ON i.fke_id_propiedad = pr.pke_id_propiedad
-            LEFT JOIN terreno t ON t.fke_id_propiedad = pr.pke_id_propiedad
-            JOIN usuario u ON u.pke_id_usuario = p.fke_id_usuario
-            LEFT JOIN usuario r ON r.pke_id_usuario = p.fke_id_usuario_revision
-        """
-    }
-}
+            "23503" -> ValidacionException(listOf("Falta un dato relacionado (usuario, modalidad o

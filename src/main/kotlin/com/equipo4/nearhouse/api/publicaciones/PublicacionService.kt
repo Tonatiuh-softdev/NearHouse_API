@@ -56,6 +56,31 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
     suspend fun foto(id: Int): FotoGuardada =
         repositorio.buscarFoto(id) ?: throw NoEncontradoException("La foto no existe")
 
+    // ---------- Acciones del vendedor sobre sus anuncios ----------
+
+    /** El anuncio, solo si existe y es del usuario. Si es de otro se responde "no existe" para no revelar que está. */
+    private suspend fun propio(id: Int, usuarioId: Int): PublicacionResponse {
+        val anuncio = repositorio.buscarPorId(id)
+        if (anuncio == null || anuncio.vendedor.id != usuarioId) throw NoEncontradoException("El anuncio no existe")
+        return anuncio
+    }
+
+    /** Pausar (activa = false) o reactivar un anuncio ya publicado. */
+    suspend fun cambiarActiva(usuarioId: Int, id: Int, activa: Boolean): PublicacionResponse {
+        val anuncio = propio(id, usuarioId)
+        if (anuncio.estado != ESTADO_PUBLICADA) {
+            throw ConflictoException("Solo se puede pausar o reactivar un anuncio que ya fue publicado")
+        }
+        repositorio.cambiarActiva(id, usuarioId, activa)
+        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+    }
+
+    /** Elimina el anuncio de forma permanente (con sus fotos y reportes). */
+    suspend fun eliminar(usuarioId: Int, id: Int) {
+        propio(id, usuarioId)
+        repositorio.eliminar(id, usuarioId)
+    }
+
     // ---------- Administrador ----------
 
     suspend fun listarParaAdmin(rol: String, estado: String?): List<PublicacionResponse> {
@@ -284,7 +309,7 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         const val MAX_COLONIA = 80
         const val SUPERFICIE_NO_CAPTURADA = 1
 
-        const val MAX_FOTOS = 5
+        const val MAX_FOTOS = MAX_FOTOS_ANUNCIO
         const val MAX_FOTO_BYTES = 2 * 1024 * 1024
         val FIRMA_PNG = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
         val FIRMA_RIFF = "RIFF".toByteArray()
