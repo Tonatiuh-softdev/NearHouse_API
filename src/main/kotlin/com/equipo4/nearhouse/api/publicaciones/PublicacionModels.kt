@@ -2,6 +2,9 @@ package com.equipo4.nearhouse.api.publicaciones
 
 import kotlinx.serialization.Serializable
 
+/** Máximo de fotos por anuncio. Cambia solo este número si quieres otro límite. */
+const val MAX_FOTOS_ANUNCIO = 20
+
 // ---------- Lo que la app MANDA (campo "datos" del multipart) ----------
 
 /**
@@ -34,6 +37,10 @@ data class CrearPublicacionRequest(
     val patio: Boolean = false,       // solo CASA (jardín/patio)
     val usoSuelo: String? = null      // solo TERRENO: HABITACIONAL o AGRICOLA
 )
+
+/** Pausar (false) o reactivar (true) un anuncio. */
+@Serializable
+data class ActivaRequest(val activa: Boolean)
 
 // ---------- Lo que la API RESPONDE ----------
 

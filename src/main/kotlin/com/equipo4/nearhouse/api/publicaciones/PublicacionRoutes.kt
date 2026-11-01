@@ -17,14 +17,16 @@ import io.ktor.server.response.cacheControl
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 
-/** Se leen como máximo 6 fotos: así se detecta que mandaron de más sin guardar archivos enormes en memoria. */
-private const val MAX_FOTOS_LEIDAS = 6
+/** Se lee una foto de más que el máximo: así se detecta que mandaron de sobra sin guardar archivos enormes en memoria. */
+private const val MAX_FOTOS_LEIDAS = MAX_FOTOS_ANUNCIO + 1
 
 /**
  * Rutas de publicaciones. Solo traducen HTTP <-> servicio.
@@ -41,7 +43,7 @@ fun Route.publicacionRoutes(service: PublicacionService) {
     authenticate(JwtService.AUTH_NAME) {
 
         // POST /api/v1/publicaciones -> crea un anuncio (queda EN_REVISION)
-        // multipart/form-data: campo "datos" (JSON) + de 1 a 5 archivos en el campo "fotos"
+        // multipart/form-data: campo "datos" (JSON) + de 1 a MAX_FOTOS_ANUNCIO archivos en el campo "fotos"
         post("/publicaciones") {
             val rol = call.usuarioRol()
             val usuarioId = call.usuarioId()
@@ -62,6 +64,18 @@ fun Route.publicacionRoutes(service: PublicacionService) {
         // GET /api/v1/publicaciones/{id} -> un anuncio con los datos de contacto del vendedor
         get("/publicaciones/{id}") {
             call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol()))
+        }
+
+        // PATCH /api/v1/publicaciones/{id}/activa  {"activa": false} -> pausa u oculta (true = reactiva)
+        patch("/publicaciones/{id}/activa") {
+            val req = call.recibir<ActivaRequest>()
+            call.respond(service.cambiarActiva(call.usuarioId(), call.idDeRuta(), req.activa))
+        }
+
+        // DELETE /api/v1/publicaciones/{id} -> elimina el anuncio de forma permanente (204 sin cuerpo)
+        delete("/publicaciones/{id}") {
+            service.eliminar(call.usuarioId(), call.idDeRuta())
+            call.respond(HttpStatusCode.NoContent)
         }
 
         route("/admin/publicaciones") {
