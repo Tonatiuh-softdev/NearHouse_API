@@ -81,6 +81,31 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         repositorio.eliminar(id, usuarioId)
     }
 
+    /**
+     * Edita un anuncio propio: reemplaza sus datos, quita las fotos indicadas y agrega las nuevas.
+     * Queda otra vez EN_REVISION (y deja de verse en el home hasta que lo aprueben).
+     */
+    suspend fun editar(usuarioId: Int, id: Int, datosJson: String?, fotosNuevas: List<ByteArray>): PublicacionResponse {
+        val actual = propio(id, usuarioId)
+        val req = leerDatos(datosJson)
+        val errores = mutableListOf<String>()
+        val publicacion = validarDatos(req, errores)
+
+        // Si se reemplaza la portada, la actual (la primera de la lista) también se quita
+        val eliminar = (req.fotosEliminar +
+            if (req.reemplazaPortada) listOfNotNull(actual.fotos.firstOrNull()) else emptyList()).distinct()
+        if (eliminar.any { it !in actual.fotos }) errores += "Alguna foto a quitar no pertenece a este anuncio"
+
+        val nuevas = if (fotosNuevas.isEmpty()) emptyList() else validarFotos(fotosNuevas, errores)
+        val total = actual.fotos.count { it !in eliminar } + nuevas.size
+        if (total !in 1..MAX_FOTOS) errores += "El anuncio debe quedar con entre 1 y $MAX_FOTOS fotos"
+        if (req.reemplazaPortada && fotosNuevas.isEmpty()) errores += "Para reemplazar la portada agrega una foto nueva"
+        if (errores.isNotEmpty()) throw ValidacionException(errores)
+
+        repositorio.editar(id, usuarioId, publicacion, eliminar, req.reemplazaPortada, nuevas)
+        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+    }
+
     // ---------- Administrador ----------
 
     suspend fun listarParaAdmin(rol: String, estado: String?): List<PublicacionResponse> {

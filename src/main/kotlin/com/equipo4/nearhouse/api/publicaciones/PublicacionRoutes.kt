@@ -21,6 +21,7 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
@@ -70,6 +71,12 @@ fun Route.publicacionRoutes(service: PublicacionService) {
         patch("/publicaciones/{id}/activa") {
             val req = call.recibir<ActivaRequest>()
             call.respond(service.cambiarActiva(call.usuarioId(), call.idDeRuta(), req.activa))
+        }
+
+        // PUT /api/v1/publicaciones/{id} -> edita un anuncio propio (multipart como al crear); queda EN_REVISION
+        put("/publicaciones/{id}") {
+            val (datos, fotos) = call.recibirPublicacion()
+            call.respond(service.editar(call.usuarioId(), call.idDeRuta(), datos, fotos))
         }
 
         // DELETE /api/v1/publicaciones/{id} -> elimina el anuncio de forma permanente (204 sin cuerpo)
