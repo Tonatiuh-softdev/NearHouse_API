@@ -8,7 +8,7 @@ import com.equipo4.nearhouse.api.auth.PasswordHasher
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuentaDesactivadaException
-import com.equipo4.nearhouse.api.common.DemasiadosIntentosException
+import com.equipo4.nearhouse.api.common.DemasiadasSolicitudesException
 import com.equipo4.nearhouse.api.common.NoAutorizadoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
@@ -21,6 +21,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Serializable
 data class GoogleProofResponse(
@@ -255,7 +258,7 @@ class UsuarioService(
 
         LoginAttemptTracker.minutosRestantes(correo)?.let { minutos ->
             val unidad = if (minutos == 1) "minuto" else "minutos"
-            throw DemasiadosIntentosException("Demasiados intentos. Espera $minutos $unidad")
+            throw DemasiadasSolicitudesException("Demasiados intentos. Espera $minutos $unidad")
         }
 
         val usuario = repositorio.buscarPorCorreo(correo)
@@ -288,6 +291,126 @@ class UsuarioService(
 
         val usuarioFinal = repositorio.buscarPorId(usuario.id)!!
         return AuthResponse(token = jwtService.generarToken(usuarioFinal.id, usuarioFinal.rol, usuarioFinal.versionSesion), usuario = usuarioFinal.toResponse())
+    }
+
+    /** PASO 2: Verificar contraseña actual con límite de intentos y bloqueo */
+    suspend fun verificarContrasenaActual(usuario: Usuario, contrasenaActual: String) {
+        val ahora = OffsetDateTime.now()
+        val bloqueoHasta = usuario.bloqueoHasta
+        if (bloqueoHasta != null && bloqueoHasta.isAfter(ahora)) {
+            val minutosFaltantes = java.time.Duration.between(ahora, bloqueoHasta).toMinutes() + 1
+            val unidad = if (minutosFaltantes == 1L) "minuto" else "minutos"
+            throw DemasiadasSolicitudesException("Demasiados intentos. Intenta de nuevo en $minutosFaltantes $unidad.")
+        }
+
+        val esCorrecta = usuario.contrasenaHash != null &&
+            withContext(Dispatchers.Default) { PasswordHasher.verificar(contrasenaActual, usuario.contrasenaHash) }
+
+        if (!esCorrecta) {
+            val nuevosIntentos = usuario.intentosFallidos + 1
+            if (nuevosIntentos >= 5) {
+                val nuevoBloqueo = ahora.plusMinutes(15)
+                repositorio.registrarIntentoFallido(usuario.id, 0, nuevoBloqueo)
+                throw DemasiadasSolicitudesException("Demasiados intentos. Intenta de nuevo en 15 minutos.")
+            } else {
+                repositorio.registrarIntentoFallido(usuario.id, nuevosIntentos, null)
+                throw ProhibidoException("La contraseña actual no es correcta")
+            }
+        } else {
+            if (usuario.intentosFallidos > 0 || usuario.bloqueoHasta != null) {
+                repositorio.resetearIntentosFallidos(usuario.id)
+            }
+        }
+    }
+
+    /** PASO 4: Pedir el código para cambiar o crear contraseña */
+    suspend fun solicitarCodigoContrasena(usuarioId: Int): CodigoContrasenaResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        val tieneContrasena = usuario.contrasenaHash != null
+        val motivo = if (tieneContrasena) MotivoCodigo.CAMBIAR_CONTRASENA else MotivoCodigo.CREAR_CONTRASENA
+
+        codigos.generarYEnviar(usuario.correo, motivo, enviador, usuarioId)
+
+        return CodigoContrasenaResponse(
+            correoOculto = ocultarCorreo(usuario.correo),
+            tieneContrasena = tieneContrasena
+        )
+    }
+
+    /** PASO 5: Verificar el código para cambiar o crear contraseña */
+    suspend fun verificarCodigoContrasena(usuarioId: Int, codigo: String): String {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        val tieneContrasena = usuario.contrasenaHash != null
+        val motivo = if (tieneContrasena) MotivoCodigo.CAMBIAR_CONTRASENA else MotivoCodigo.CREAR_CONTRASENA
+
+        codigos.verificar(usuario.correo, motivo, codigo, usuarioId)
+
+        return jwtService.generarComprobanteContrasena(usuario.id, usuario.versionSesion)
+    }
+
+    /** PASO 6: Guardar la nueva contraseña */
+    suspend fun cambiarOcrearContrasena(usuarioId: Int, req: CambiarContrasenaRequest): AuthResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        // PASO 6.1: Validar comprobante
+        val proofInfo = jwtService.obtenerComprobanteContrasena(req.comprobante)
+            ?: throw ConflictoException("El tiempo para cambiar tu contraseña terminó. Vuelve a empezar.")
+
+        if (proofInfo.first != usuario.id || proofInfo.second != usuario.versionSesion) {
+            throw ConflictoException("El tiempo para cambiar tu contraseña terminó. Vuelve a empezar.")
+        }
+
+        val tieneContrasena = usuario.contrasenaHash != null
+
+        // PASO 6.2: Si tiene contraseña, validar actual
+        if (tieneContrasena) {
+            verificarContrasenaActual(usuario, req.contrasenaActual.orEmpty())
+        }
+
+        // PASO 6.3: Validar contraseña nueva
+        val nueva = req.contrasenaNueva.trim()
+        if (nueva.length < MIN_CONTRASENA) {
+            throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
+        }
+        if (nueva.toByteArray().size > MAX_CONTRASENA_BYTES) {
+            throw ValidacionException(listOf("La nueva contraseña es demasiado larga"))
+        }
+        if (tieneContrasena && req.contrasenaActual != null && req.contrasenaActual == nueva) {
+            throw ValidacionException(listOf("La nueva contraseña debe ser distinta de la actual"))
+        }
+
+        // PASO 6.4: Guardar hash nuevo, actualizar versión de sesión y fecha cambio
+        val nuevoHash = withContext(Dispatchers.Default) { PasswordHasher.hash(nueva) }
+        repositorio.actualizarContrasena(usuario.id, nuevoHash)
+
+        val usuarioActualizado = repositorio.buscarPorId(usuario.id)!!
+
+        // PASO 6.5: Generar nuevo token de sesión con la nueva versión
+        val nuevoToken = jwtService.generarToken(
+            usuarioActualizado.id,
+            usuarioActualizado.rol,
+            usuarioActualizado.versionSesion
+        )
+
+        // PASO 6.6: Enviar correo de aviso
+        try {
+            val fechaHoraStr = formatearFechaHoraColima(OffsetDateTime.now())
+            val mensaje = if (tieneContrasena) {
+                PlantillasCorreo.contrasenaCambiada(usuario.correo, fechaHoraStr)
+            } else {
+                PlantillasCorreo.contrasenaCreada(usuario.correo, fechaHoraStr)
+            }
+            enviador.enviar(mensaje)
+        } catch (_: Exception) {
+            // Si el envío de correo falla, no cancela el cambio de contraseña
+        }
+
+        return AuthResponse(token = nuevoToken, usuario = usuarioActualizado.toResponse())
     }
 
     /** Desactiva la cuenta del usuario previa verificación de identidad. */
@@ -368,6 +491,22 @@ class UsuarioService(
 
     suspend fun obtenerFoto(id: Int): FotoPerfil =
         repositorio.buscarFoto(id) ?: throw NoEncontradoException("El usuario no tiene foto de perfil")
+
+    private fun ocultarCorreo(correo: String): String {
+        val partes = correo.split("@")
+        if (partes.size < 2) return correo
+        val usuario = partes[0]
+        val dominio = partes[1]
+        val primeraLetra = usuario.take(1)
+        return "$primeraLetra•••@$dominio"
+    }
+
+    private fun formatearFechaHoraColima(ahora: OffsetDateTime): String {
+        val zoneId = ZoneId.of("America/Mexico_City")
+        val localDate = ahora.atZoneSameInstant(zoneId)
+        val formatter = DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy, h:mm a", Locale("es", "MX"))
+        return localDate.format(formatter)
+    }
 
     private fun validarTextoPerfil(
         valor: String,

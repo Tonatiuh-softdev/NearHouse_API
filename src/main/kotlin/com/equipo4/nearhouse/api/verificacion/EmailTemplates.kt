@@ -35,6 +35,18 @@ enum class MotivoCodigo(
         aviso = "Eliminar tu cuenta no se puede deshacer. " +
             "Si tú no lo pediste, alguien entró a tu cuenta: cambia tu contraseña cuanto antes.",
     ),
+    CAMBIAR_CONTRASENA(
+        asunto = "Tu código para cambiar tu contraseña de NearHouse",
+        titulo = "Confirma el cambio de contraseña",
+        accion = "confirmar el cambio de tu contraseña",
+        aviso = "Si tú no lo pediste, ignora este correo: tu contraseña sigue igual.",
+    ),
+    CREAR_CONTRASENA(
+        asunto = "Tu código para crear tu contraseña de NearHouse",
+        titulo = "Crea tu contraseña",
+        accion = "crear la contraseña de tu cuenta",
+        aviso = "Si tú no lo pediste, ignora este correo: tu cuenta sigue igual.",
+    ),
 }
 
 /**
@@ -68,6 +80,30 @@ object PlantillasCorreo {
                 "<p>Para volver, solo inicia sesión en la app.</p>",
         ),
         texto = "Desactivaste tu cuenta de NearHouse. Tus anuncios ya no se ven. Para volver, solo inicia sesión en la app.",
+    )
+
+    /** Correo de aviso cuando se cambia la contraseña. */
+    fun contrasenaCambiada(para: String, fechaHora: String) = MensajeCorreo(
+        para = para,
+        asunto = "Tu contraseña de NearHouse se cambió",
+        html = diseno(
+            "Tu contraseña se cambió",
+            "<p>Tu contraseña de NearHouse se cambió el $fechaHora.</p>" +
+                "<p>Si no fuiste tú, recupera tu cuenta con ‘¿Olvidaste tu contraseña?’.</p>",
+        ),
+        texto = "Tu contraseña de NearHouse se cambió el $fechaHora. Si no fuiste tú, recupera tu cuenta con ‘¿Olvidaste tu contraseña?’.",
+    )
+
+    /** Correo de aviso cuando se crea una contraseña (cuenta de Google). */
+    fun contrasenaCreada(para: String, fechaHora: String) = MensajeCorreo(
+        para = para,
+        asunto = "Creaste una contraseña en NearHouse",
+        html = diseno(
+            "Creaste una contraseña",
+            "<p>El $fechaHora se creó una contraseña para tu cuenta de NearHouse.</p>" +
+                "<p>Ahora puedes entrar con tu correo y contraseña, o con Google. Si no fuiste tú, recupera tu cuenta con ‘¿Olvidaste tu contraseña?’.</p>",
+        ),
+        texto = "El $fechaHora se creó una contraseña para tu cuenta de NearHouse. Ahora puedes entrar con tu correo y contraseña, o con Google. Si no fuiste tú, recupera tu cuenta con ‘¿Olvidaste tu contraseña?’.",
     )
 
     /** Ejemplo de correo sin código: aviso de que la cuenta ya se eliminó. */

@@ -71,6 +71,18 @@ data class DesactivarCuentaRequest(
     val googleToken: String? = null
 )
 
+@Serializable
+data class VerificarCodigoContrasenaRequest(
+    val codigo: String
+)
+
+@Serializable
+data class CambiarContrasenaRequest(
+    val comprobante: String,
+    val contrasenaActual: String? = null,
+    val contrasenaNueva: String
+)
+
 /** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
 @Serializable
 data class ActualizarPerfilRequest(
@@ -84,6 +96,17 @@ data class ActualizarPerfilRequest(
 @Serializable
 data class VerifyCodigoCorreoResponse(
     val comprobanteCorreo: String
+)
+
+@Serializable
+data class CodigoContrasenaResponse(
+    val correoOculto: String,
+    val tieneContrasena: Boolean
+)
+
+@Serializable
+data class VerificarCodigoContrasenaResponse(
+    val comprobante: String
 )
 
 @Serializable
@@ -103,7 +126,8 @@ data class UsuarioResponse(
     val fotoVersion: String? = null,
     val plan: PlanUsuarioResponse? = null,
     val pruebaDisponible: Boolean = false,
-    val desactivada: Boolean = false
+    val desactivada: Boolean = false,
+    val tieneContrasena: Boolean = false
 )
 
 @Serializable
@@ -164,7 +188,9 @@ data class Usuario(
     val pruebaUsada: Boolean = false,
     val fechaDesactivacion: OffsetDateTime? = null,
     val fechaEliminacionProgramada: OffsetDateTime? = null,
-    val versionSesion: Int = 1
+    val versionSesion: Int = 1,
+    val intentosFallidos: Int = 0,
+    val bloqueoHasta: OffsetDateTime? = null
 ) {
     /** Versión segura para responder: sin el hash de la contraseña ni datos sensibles. */
     fun toResponse() = UsuarioResponse(
@@ -197,7 +223,8 @@ data class Usuario(
             }
         },
         pruebaDisponible = !pruebaUsada,
-        desactivada = fechaDesactivacion != null
+        desactivada = fechaDesactivacion != null,
+        tieneContrasena = contrasenaHash != null
     )
 }
 
