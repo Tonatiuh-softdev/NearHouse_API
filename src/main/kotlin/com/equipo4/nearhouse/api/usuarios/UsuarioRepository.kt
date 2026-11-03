@@ -151,6 +151,63 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Registra intento fallido de contraseña o bloqueo. */
+    suspend fun registrarIntentoFallido(idUsuario: Int, nuevosIntentos: Int, bloqueoHasta: OffsetDateTime?): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET e_intentos_fallidos_usuario = ?,
+                    fh_bloqueo_hasta_usuario = ?,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, nuevosIntentos)
+                ps.setObject(2, bloqueoHasta)
+                ps.setInt(3, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Resetea los intentos fallidos a 0 y borra el bloqueo. */
+    suspend fun resetearIntentosFallidos(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET e_intentos_fallidos_usuario = 0,
+                    fh_bloqueo_hasta_usuario = NULL,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Actualiza la contraseña, sube la versión de sesión en 1 y reinicia intentos/bloqueo. */
+    suspend fun actualizarContrasena(idUsuario: Int, nuevoHash: String): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET t_contrasena_usuario = ?,
+                    fh_cambio_contrasena_usuario = CURRENT_TIMESTAMP,
+                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                    e_intentos_fallidos_usuario = 0,
+                    fh_bloqueo_hasta_usuario = NULL,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, nuevoHash)
+                ps.setInt(2, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
     /** Guarda los bytes de la foto, su tipo y la fecha. */
     suspend fun guardarFoto(id: Int, bytes: ByteArray, tipo: String): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
@@ -317,7 +374,9 @@ class UsuarioRepository(private val dataSource: DataSource) {
         pruebaUsada = getBoolean("b_prueba_gratis_usada_usuario"),
         fechaDesactivacion = getObject("fh_desactivacion_usuario", OffsetDateTime::class.java),
         fechaEliminacionProgramada = getObject("fh_eliminacion_programada_usuario", OffsetDateTime::class.java),
-        versionSesion = getInt("e_version_sesion_usuario").let { if (wasNull()) 1 else it }
+        versionSesion = getInt("e_version_sesion_usuario").let { if (wasNull()) 1 else it },
+        intentosFallidos = getInt("e_intentos_fallidos_usuario").let { if (wasNull()) 0 else it },
+        bloqueoHasta = getObject("fh_bloqueo_hasta_usuario", OffsetDateTime::class.java)
     )
 
     private companion object {
@@ -334,7 +393,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
                    u.b_prueba_gratis_usada_usuario,
                    r.t_nombre_rol,
                    u.fh_desactivacion_usuario, u.fh_eliminacion_programada_usuario,
-                   u.e_version_sesion_usuario
+                   u.e_version_sesion_usuario, u.e_intentos_fallidos_usuario, u.fh_bloqueo_hasta_usuario
             FROM usuario u
             JOIN rol r ON r.pke_id_rol = u.fke_id_rol
             LEFT JOIN suscripcion s ON s.pke_id_suscripcion = u.fke_id_suscripcion
