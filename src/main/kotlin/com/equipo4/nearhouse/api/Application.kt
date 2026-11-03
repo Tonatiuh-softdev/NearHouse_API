@@ -54,14 +54,10 @@ fun Application.module(config: AppConfig) {
     val firebaseTokenVerifier = FirebaseTokenVerifier(projectId = config.firebaseProjectId)
     val googleProofService = GoogleProofService(jwtSecret = config.jwtSecret)
 
-    // Correo: Brevo si hay llave y remitente; consola solo si se pidió a propósito.
+    // Correo: Brevo si hay llave y remitente válidos; consola de lo contrario.
     val enviadorCorreo: EnviadorCorreo = when {
-        config.apiBrevo.isNotBlank() && config.senderEmail.isNotBlank() -> EnviadorCorreoBrevo(config)
-        config.correoModoConsola -> EnviadorCorreoConsola()
-        config.apiBrevo.isNotBlank() -> error("Falta CORREO_REMITENTE (el correo que validaste en Brevo).")
-        else -> error(
-            "Falta BREVO_API_KEY. Para probar sin mandar correos, pon CORREO_MODO_CONSOLA=true en tu .env."
-        )
+        config.apiBrevo.isNotBlank() && config.senderEmail.isNotBlank() && !config.correoModoConsola -> EnviadorCorreoBrevo(config)
+        else -> EnviadorCorreoConsola()
     }
 
     // UNO solo para toda la API: aquí viven los códigos pendientes
