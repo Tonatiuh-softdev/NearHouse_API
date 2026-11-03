@@ -105,26 +105,6 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             call.respond(HttpStatusCode.NoContent)
         }
 
-        // POST /api/v1/usuarios/me/contrasena/codigo -> Solicita código para cambiar/crear contraseña
-        post("/usuarios/me/contrasena/codigo") {
-            val respuesta = service.solicitarCodigoContrasena(call.usuarioId())
-            call.respond(HttpStatusCode.OK, respuesta)
-        }
-
-        // POST /api/v1/usuarios/me/contrasena/verificar -> Valida código y regresa comprobante JWT
-        post("/usuarios/me/contrasena/verificar") {
-            val req = call.recibir<VerificarCodigoContrasenaRequest>()
-            val comprobante = service.verificarCodigoContrasena(call.usuarioId(), req.codigo)
-            call.respond(HttpStatusCode.OK, VerificarCodigoContrasenaResponse(comprobante))
-        }
-
-        // PUT /api/v1/usuarios/me/contrasena -> Cambia o crea la contraseña
-        put("/usuarios/me/contrasena") {
-            val req = call.recibir<CambiarContrasenaRequest>()
-            val respuesta = service.cambiarOcrearContrasena(call.usuarioId(), req)
-            call.respond(HttpStatusCode.OK, respuesta)
-        }
-
         // PUT /api/v1/usuarios/me/foto -> sube la foto (multipart, campo "foto")
         put("/usuarios/me/foto") {
             val bytes = call.recibirFoto()

@@ -14,6 +14,8 @@ import com.equipo4.nearhouse.api.plugins.configureSerialization
 import com.equipo4.nearhouse.api.plugins.configureStatusPages
 import com.equipo4.nearhouse.api.publicaciones.PublicacionRepository
 import com.equipo4.nearhouse.api.publicaciones.PublicacionService
+import com.equipo4.nearhouse.api.reportes.ReporteRepository
+import com.equipo4.nearhouse.api.reportes.ReporteService
 import com.equipo4.nearhouse.api.usuarios.UsuarioRepository
 import com.equipo4.nearhouse.api.usuarios.UsuarioService
 import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
@@ -24,8 +26,6 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import com.equipo4.nearhouse.api.reportes.ReporteRepository
-import com.equipo4.nearhouse.api.reportes.ReporteService
 
 /**
  * Punto de entrada de la API. Lee la configuración de las variables de entorno
@@ -85,13 +85,7 @@ fun Application.module(config: AppConfig) {
     // Crear anuncios (con fotos)
     val publicacionService = PublicacionService(PublicacionRepository(dataSource))
 
-    // Plugins
-    configureSerialization()
-    configureMonitoring()
-    configureStatusPages()
-    configureSecurity(jwtService, usuarioRepository)
-    configureRouting(dataSource, usuarioService, coloniaService, publicacionService)
-        // Reportes de publicaciones
+    // Reportes de publicaciones
     val reporteService = ReporteService(ReporteRepository(dataSource))
 
     // Plugins
