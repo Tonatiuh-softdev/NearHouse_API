@@ -55,7 +55,6 @@ fun Application.module(config: AppConfig) {
     val googleProofService = GoogleProofService(jwtSecret = config.jwtSecret)
 
     // Correo: Brevo si hay llave y remitente; consola solo si se pidió a propósito.
-    // Si no hay ninguno, la API no arranca, para que nunca se quede en modo consola en Railway.
     val enviadorCorreo: EnviadorCorreo = when {
         config.apiBrevo.isNotBlank() && config.senderEmail.isNotBlank() -> EnviadorCorreoBrevo(config)
         config.correoModoConsola -> EnviadorCorreoConsola()
