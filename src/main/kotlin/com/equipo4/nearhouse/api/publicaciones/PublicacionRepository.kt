@@ -321,8 +321,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
             codigoPostal = getString("t_codigo_postal_propiedad"),
             latitud = getDouble("n_latitud_propiedad"),
             longitud = getDouble("n_longitud_propiedad"),
-            // En casa y departamento la base guarda un valor de relleno: no se manda
-            superficie = if (tipo == "TERRENO") getInt("e_superficie_propiedad") else null,
+            // Los anuncios anteriores a este cambio guardaron 1 como relleno: ese valor no se manda
+            superficie = getInt("e_superficie_propiedad").takeIf { tipo == "TERRENO" || it > 1 },
             usoSuelo = getString("t_uso_suelo_terreno"),
             dormitorios = intOrNull("e_dormitorios_inmueble"),
             banos = intOrNull("e_banos_inmueble"),
