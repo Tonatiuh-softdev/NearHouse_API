@@ -209,14 +209,13 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
 
         var inmueble: DatosInmueble? = null
         var usoSuelo: String? = null
-        // La base exige superficie > 0 en toda propiedad, pero la app solo la pide en terreno.
-        // En casa y departamento se guarda este valor de relleno (los m² van en la descripción).
-        var superficie = SUPERFICIE_NO_CAPTURADA
+
+        // La superficie (m²) es obligatoria en los tres tipos
+        val superficie = req.superficie ?: 0
+        if (superficie !in 1..MAX_SUPERFICIE) errores += "La superficie debe ser mayor que 0"
 
         when (tipo) {
             "TERRENO" -> {
-                superficie = req.superficie ?: 0
-                if (superficie !in 1..MAX_SUPERFICIE) errores += "La superficie del terreno debe ser mayor que 0"
                 usoSuelo = req.usoSuelo?.trim()?.uppercase()
                 if (usoSuelo == null || usoSuelo !in USOS_SUELO) errores += "El uso de suelo debe ser HABITACIONAL o AGRICOLA"
             }
@@ -332,7 +331,6 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         const val MAX_CALLE = 120
         const val MAX_NUMERO = 20
         const val MAX_COLONIA = 80
-        const val SUPERFICIE_NO_CAPTURADA = 1
 
         const val MAX_FOTOS = MAX_FOTOS_ANUNCIO
         const val MAX_FOTO_BYTES = 2 * 1024 * 1024
