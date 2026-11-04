@@ -14,6 +14,13 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
+import com.equipo4.nearhouse.api.common.recibir
+import com.equipo4.nearhouse.api.common.usuarioRol
+import io.ktor.http.ContentType
+import io.ktor.server.response.respondBytes
+import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
+import io.ktor.server.routing.route
 
 /** Se lee una imagen de más para detectar que mandaron de sobra sin guardar archivos enormes en memoria. */
 private const val MAX_IMAGENES_LEIDAS = 6
@@ -29,6 +36,36 @@ fun Route.reporteRoutes(service: ReporteService) {
                 HttpStatusCode.Created,
                 service.crear(call.usuarioId(), call.idDeRuta(), datos, fotos)
             )
+        }
+
+        // Administración de reportes (solo administradores)
+        route("/admin/reportes") {
+
+            // GET /api/v1/admin/reportes?estado=PENDIENTE&pagina=1
+            get {
+                val estado = call.request.queryParameters["estado"]
+                val pagina = call.request.queryParameters["pagina"]?.toIntOrNull()
+                call.respond(service.listarAdmin(call.usuarioRol(), estado, pagina))
+            }
+
+            // GET /api/v1/admin/reportes/evidencias/{id}  (no es pública: requiere token)
+            get("/evidencias/{id}") {
+                val evidencia = service.evidencia(call.usuarioRol(), call.idDeRuta())
+                call.respondBytes(evidencia.bytes, ContentType.parse(evidencia.tipo))
+            }
+
+            // GET /api/v1/admin/reportes/{id}
+            get("/{id}") {
+                call.respond(service.detalleAdmin(call.usuarioRol(), call.idDeRuta()))
+            }
+
+            // PATCH /api/v1/admin/reportes/{id}  {"estado": "...", "nota": "...", "retirarPublicacion": false}
+            patch("/{id}") {
+                val req = call.recibir<ResolverReporteRequest>()
+                val id = call.idDeRuta()
+                service.resolver(call.usuarioRol(), call.usuarioId(), id, req)
+                call.respond(service.detalleAdmin(call.usuarioRol(), id))
+            }
         }
     }
 }

@@ -16,6 +16,52 @@ data class ReporteCreadoResponse(
     val estado: String       // siempre PENDIENTE al crear
 )
 
+@Serializable
+data class PublicacionResumenResponse(
+    val id: Int,
+    val titulo: String,
+    val fotoId: Int?,
+    val estado: String,
+    val reportesPendientes: Int
+)
+
+@Serializable
+data class ReporteListaResponse(
+    val id: Int,
+    val categoria: String,
+    val motivo: String,
+    val descripcionCorta: String,
+    val fecha: Long,
+    val estado: String,
+    val imagenes: Int,
+    val publicacion: PublicacionResumenResponse
+)
+
+@Serializable
+data class ReporteDetalleResponse(
+    val id: Int,
+    val categoria: String,
+    val motivo: String,
+    val descripcion: String,
+    val fecha: Long,
+    val estado: String,
+    val imagenes: List<Int>,
+    val publicacion: PublicacionResumenResponse,
+    /** null = la cuenta que reportó ya no existe ("Cuenta eliminada" en la app). */
+    val reportadoPorNombre: String?,
+    val reportadoPorCorreo: String?,
+    val nota: String?,
+    val resueltoPor: String?,
+    val fechaResolucion: Long?
+)
+
+@Serializable
+data class ResolverReporteRequest(
+    val estado: String,
+    val nota: String,
+    val retirarPublicacion: Boolean = false
+)
+
 /** Publicación visible para reportar: solo lo necesario para validar el dueño. */
 data class PublicacionVisible(val vendedorId: Int)
 
