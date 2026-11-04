@@ -54,9 +54,10 @@ fun Application.module(config: AppConfig) {
     val firebaseTokenVerifier = FirebaseTokenVerifier(projectId = config.firebaseProjectId)
     val googleProofService = GoogleProofService(jwtSecret = config.jwtSecret)
 
-    // Correo: Brevo si hay llave y remitente válidos; consola de lo contrario.
+    // Correo: Consola si está activo CORREO_MODO_CONSOLA=true; Brevo si hay llave y remitente válidos.
     val enviadorCorreo: EnviadorCorreo = when {
-        config.apiBrevo.isNotBlank() && config.senderEmail.isNotBlank() && !config.correoModoConsola -> EnviadorCorreoBrevo(config)
+        config.correoModoConsola -> EnviadorCorreoConsola()
+        config.apiBrevo.isNotBlank() && config.senderEmail.isNotBlank() -> EnviadorCorreoBrevo(config)
         else -> EnviadorCorreoConsola()
     }
 
