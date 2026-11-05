@@ -383,7 +383,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
         contrasenaHash = getString("t_contrasena_usuario"),
         googleId = getString("t_google_id_usuario"),
         rol = getString("t_nombre_rol"),
-        activo = getBoolean("b_estatus_usuario"),
+        activo = getBoolean("b_cuenta_activa"),
         correoVerificado = getBoolean("b_correo_verificado_usuario"),
         telefonoVerificado = getBoolean("b_telefono_verificado_usuario"),
         fechaRegistro = getObject("fh_fecha_registro_usuario", OffsetDateTime::class.java).toString(),
@@ -402,11 +402,15 @@ class UsuarioRepository(private val dataSource: DataSource) {
     )
 
     private companion object {
-        // b_tiene_foto se calcula en SQL para no traer los bytes de la foto en cada consulta
+        // b_tiene_foto se calcula en SQL para no traer los bytes de la foto en cada consulta.
+        // b_cuenta_activa: no está suspendida por un administrador. Desde la migración 11 ya no existe
+        // b_estatus_usuario; la suspensión dura hasta fh_suspension_hasta_usuario (vacío = nunca suspendida).
         const val SELECT_BASE = """
             SELECT u.pke_id_usuario, u.t_nombre_usuario, u.t_primer_apellido_usuario,
                    u.t_segundo_apellido_usuario, u.t_correo_usuario, u.t_telefono_usuario,
-                   u.t_contrasena_usuario, u.t_google_id_usuario, u.b_estatus_usuario,
+                   u.t_contrasena_usuario, u.t_google_id_usuario,
+                   (u.fh_suspension_hasta_usuario IS NULL
+                    OR u.fh_suspension_hasta_usuario <= CURRENT_TIMESTAMP) AS b_cuenta_activa,
                    u.b_correo_verificado_usuario, u.b_telefono_verificado_usuario,
                    u.fh_fecha_registro_usuario, u.fh_fecha_foto_usuario,
                    (u.by_foto_usuario IS NOT NULL) AS b_tiene_foto,
