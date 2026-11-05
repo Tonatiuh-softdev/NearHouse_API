@@ -92,6 +92,19 @@ data class CambiarContrasenaRequest(
     val contrasenaNueva: String
 )
 
+@Serializable
+data class SolicitarCodigoCambioCorreoRequest(
+    val correoNuevo: String,
+    val contrasena: String? = null,
+    val googleToken: String? = null
+)
+
+@Serializable
+data class ConfirmarCambioCorreoRequest(
+    val correoNuevo: String,
+    val codigo: String
+)
+
 /** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
 @Serializable
 data class ActualizarPerfilRequest(

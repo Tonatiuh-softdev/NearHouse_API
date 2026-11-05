@@ -118,6 +118,28 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Actualiza el correo del usuario y marca b_correo_verificado_usuario = TRUE. */
+    suspend fun actualizarCorreo(idUsuario: Int, correoNuevo: String): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET t_correo_usuario = ?,
+                    b_correo_verificado_usuario = TRUE,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, correoNuevo)
+                ps.setInt(2, idUsuario)
+                try {
+                    ps.executeUpdate() > 0
+                } catch (e: SQLException) {
+                    throw traducirError(e)
+                }
+            }
+        }
+    }
+
     /** Desactiva la cuenta guardando la fecha actual e incrementando la versión de sesión. */
     suspend fun desactivarCuenta(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
@@ -423,7 +445,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
                 "uq_usuario_correo" -> ConflictoException("Ese correo ya está registrado")
                 "uq_usuario_telefono" -> ConflictoException("Ese teléfono ya está registrado")
                 "unique_google_id_usuario" -> ConflictoException("Ese ID de Google ya está registrado")
-                else -> ConflictoException("El registro ya existe")
+                else -> ConflictoException("Ese correo ya está registrado")
             }
             "23514" -> when (restriccion) {
                 "check_auth_method" -> ValidacionException(listOf("La cuenta debe poseer una contraseña o un ID de Google"))

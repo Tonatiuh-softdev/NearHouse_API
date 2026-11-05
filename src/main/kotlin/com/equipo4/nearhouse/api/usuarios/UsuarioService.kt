@@ -337,6 +337,96 @@ class UsuarioService(
         }
     }
 
+    /** Pedir el código para cambiar correo */
+    suspend fun solicitarCodigoCambioCorreo(usuarioId: Int, req: SolicitarCodigoCambioCorreoRequest) {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        val tieneContrasena = usuario.contrasenaHash != null
+
+        // Confirma identidad
+        if (tieneContrasena) {
+            val contrasena = req.contrasena
+            if (contrasena.isNullOrBlank()) {
+                throw ValidacionException(listOf("La contraseña actual es obligatoria"))
+            }
+            if (!req.googleToken.isNullOrBlank()) {
+                throw ValidacionException(listOf("Debes confirmar con tu contraseña actual"))
+            }
+            verificarContrasenaActual(usuario, contrasena)
+        } else {
+            // Cuenta de Google
+            val googleToken = req.googleToken
+            if (googleToken.isNullOrBlank()) {
+                throw ValidacionException(listOf("Debes confirmar con Google"))
+            }
+            val payload = firebaseTokenVerifier.verifyToken(googleToken)
+                ?: throw ValidacionException(listOf("Token de Google inválido"))
+
+            if (payload.googleId != usuario.googleId) {
+                throw ProhibidoException("Esa cuenta de Google no es la de tu cuenta de NearHouse")
+            }
+
+            val ahoraSec = System.currentTimeMillis() / 1000
+            val authTime = payload.authTimeSeconds ?: ahoraSec
+            if (ahoraSec - authTime > 600) { // 10 minutos = 600 s
+                throw ValidacionException(listOf("Confirma con Google otra vez"))
+            }
+        }
+
+        // Validar correo nuevo
+        val correoNuevo = req.correoNuevo.trim().lowercase()
+        if (!REGEX_CORREO.matches(correoNuevo)) {
+            throw ValidacionException(listOf("El correo nuevo no tiene un formato válido"))
+        }
+        if (correoNuevo == usuario.correo.lowercase()) {
+            throw ValidacionException(listOf("El correo nuevo debe ser distinto del actual"))
+        }
+        if (repositorio.buscarPorCorreo(correoNuevo) != null) {
+            throw ConflictoException("Ese correo ya está registrado")
+        }
+
+        // Manda el código al correo nuevo
+        codigos.generarYEnviar(correoNuevo, MotivoCodigo.CAMBIAR_CORREO, enviador, usuario.id)
+    }
+
+    /** Confirmar cambio de correo */
+    suspend fun confirmarCambioCorreo(usuarioId: Int, req: ConfirmarCambioCorreoRequest): UsuarioResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        val correoNuevo = req.correoNuevo.trim().lowercase()
+        if (!REGEX_CORREO.matches(correoNuevo)) {
+            throw ValidacionException(listOf("El correo nuevo no tiene un formato válido"))
+        }
+
+        // Verificar el código de 6 dígitos
+        codigos.verificar(correoNuevo, MotivoCodigo.CAMBIAR_CORREO, req.codigo, usuario.id)
+
+        // Verificar que el correo siga libre
+        if (repositorio.buscarPorCorreo(correoNuevo) != null) {
+            throw ConflictoException("Ese correo ya está registrado")
+        }
+
+        val correoAnterior = usuario.correo
+
+        // Actualizar correo en la base de datos
+        repositorio.actualizarCorreo(usuario.id, correoNuevo)
+
+        val usuarioActualizado = repositorio.buscarPorId(usuario.id)!!
+
+        // Enviar correo de aviso al correo anterior
+        try {
+            val fechaHoraStr = formatearFechaHoraColima(OffsetDateTime.now())
+            val correoNuevoOculto = ocultarCorreo(correoNuevo)
+            enviador.enviar(PlantillasCorreo.correoCambiado(correoAnterior, correoNuevoOculto, fechaHoraStr))
+        } catch (_: Exception) {
+            // Si el envío del correo de aviso falla, el cambio en BD permanece guardado
+        }
+
+        return usuarioActualizado.toResponse()
+    }
+
     /** PASO 4: Pedir el código para cambiar o crear contraseña */
     suspend fun solicitarCodigoContrasena(usuarioId: Int): CodigoContrasenaResponse {
         val usuario = repositorio.buscarPorId(usuarioId)

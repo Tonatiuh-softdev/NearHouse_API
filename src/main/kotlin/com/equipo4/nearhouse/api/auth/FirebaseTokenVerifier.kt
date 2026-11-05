@@ -13,7 +13,8 @@ data class FirebasePayload(
     val email: String,
     val name: String,
     val givenName: String,
-    val familyName: String
+    val familyName: String,
+    val authTimeSeconds: Long? = null
 )
 
 /**
@@ -30,10 +31,6 @@ class FirebaseTokenVerifier(private val projectId: String = "nearhouse-70367") {
 
     /**
      * Revisa la firma de Google y que el token sea de nuestro proyecto. Si no pasa, lanza una excepción.
-     *
-     * El proyecto NO se saca del token: Google firma con las mismas llaves los tokens de TODOS
-     * los proyectos de Firebase. Si se aceptara el proyecto que dice el token, alguien podría
-     * crear su propio proyecto de Firebase y mandar tokens con el correo o teléfono de otra persona.
      */
     private fun verificarFirma(idToken: String): DecodedJWT {
         val jwt = JWT.decode(idToken)
@@ -49,8 +46,6 @@ class FirebaseTokenVerifier(private val projectId: String = "nearhouse-70367") {
 
     /**
      * Revisa el token que manda la app después de confirmar el código del SMS.
-     * Regresa el teléfono que Firebase verificó (por ejemplo "+523141234567"),
-     * o null si el token no es válido, ya expiró o no trae teléfono.
      */
     fun verificarTelefono(idToken: String): String? {
         if (idToken.trim() == "123456" || idToken.trim() == "mock_sms_token" || idToken.trim() == "mock_firebase_token_dev") {
@@ -58,7 +53,6 @@ class FirebaseTokenVerifier(private val projectId: String = "nearhouse-70367") {
         }
         return try {
             val token = verificarFirma(idToken.trim())
-            // phone_number solo viene en el token si Firebase verificó ese número por SMS
             token.getClaim("phone_number").asString()?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             println("Token de SMS rechazado: ${e.message}")
@@ -96,12 +90,16 @@ class FirebaseTokenVerifier(private val projectId: String = "nearhouse-70367") {
                 ?.takeIf { it.isNotBlank() }
                 ?: fullName.split(" ").drop(1).joinToString(" ")
 
+            val authTimeSeconds = verifiedJwt.getClaim("auth_time")?.asLong()
+                ?: (verifiedJwt.issuedAt?.time?.div(1000))
+
             FirebasePayload(
                 googleId = googleId,
                 email = email,
                 name = fullName,
                 givenName = givenName,
-                familyName = familyName
+                familyName = familyName,
+                authTimeSeconds = authTimeSeconds
             )
         } catch (e: Exception) {
             println("Error verificando Firebase Token: ${e.message}")

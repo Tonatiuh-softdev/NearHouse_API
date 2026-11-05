@@ -120,6 +120,18 @@ object PlantillasCorreo {
         texto = "El $fechaHora se creó una contraseña para tu cuenta de NearHouse. Ahora puedes entrar con tu correo y contraseña, o con Google. Si no fuiste tú, recupera tu cuenta con ‘¿Olvidaste tu contraseña?’.",
     )
 
+    /** Correo de aviso cuando se cambia el correo de la cuenta. */
+    fun correoCambiado(para: String, correoNuevoOculto: String, fechaHora: String) = MensajeCorreo(
+        para = para,
+        asunto = "El correo de tu cuenta de NearHouse se cambió",
+        html = diseno(
+            "El correo de tu cuenta se cambió",
+            "<p>El $fechaHora el correo de tu cuenta de NearHouse se cambió a $correoNuevoOculto.</p>" +
+                "<p>Si no fuiste tú, escríbenos a soporte@nearhouse.com lo antes posible.</p>",
+        ),
+        texto = "El $fechaHora el correo de tu cuenta de NearHouse se cambió a $correoNuevoOculto. Si no fuiste tú, escríbenos a soporte@nearhouse.com lo antes posible.",
+    )
+
     /** Ejemplo de correo sin código: aviso de que la cuenta ya se eliminó. */
     fun cuentaEliminada(para: String) = MensajeCorreo(
         para = para,
