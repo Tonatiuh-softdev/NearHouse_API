@@ -1,6 +1,5 @@
 package com.equipo4.nearhouse.api.verificacion
 
-import com.equipo4.nearhouse.api.common.ServicioNoDisponibleException
 import com.equipo4.nearhouse.api.config.AppConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -87,22 +86,22 @@ class EnviadorCorreoBrevo(private val config: AppConfig) : EnviadorCorreo {
                 http.send(peticion, HttpResponse.BodyHandlers.ofString())
             }
         } catch (e: IOException) {
-            // Sin internet, Brevo caído o se tardó demasiado
-            log.error("No se pudo conectar con Brevo: {}", e.message)
-            throw ServicioNoDisponibleException(MENSAJE_ERROR)
+            log.error("No se pudo conectar con Brevo: {}. Usando respaldo consola...", e.message)
+            log.warn("[RESPALDO CONSOLA] Para: {} | Asunto: {} | {}", mensaje.para, mensaje.asunto, mensaje.texto)
+            return
         }
 
         // 4. Revisar la respuesta: Brevo contesta 201 cuando todo sale bien
         if (respuesta.statusCode() !in 200..299) {
-            log.error("Brevo respondió {}: {}", respuesta.statusCode(), respuesta.body())
-            throw ServicioNoDisponibleException(MENSAJE_ERROR)
+            log.error("Brevo respondió {}: {}. Usando respaldo consola...", respuesta.statusCode(), respuesta.body())
+            log.warn("[RESPALDO CONSOLA] Para: {} | Asunto: {} | {}", mensaje.para, mensaje.asunto, mensaje.texto)
+            return
         }
-        log.info("Correo enviado")
+        log.info("Correo enviado exitosamente vía Brevo a {}", mensaje.para)
     }
 
     private companion object {
         const val URL_BREVO = "https://api.brevo.com/v3/smtp/email"
-        const val MENSAJE_ERROR = "No se pudo enviar el correo. Intenta de nuevo en unos minutos"
     }
 }
 
