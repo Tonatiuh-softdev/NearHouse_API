@@ -47,8 +47,9 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
     /** Un anuncio. Los no publicados solo los ve su dueño o un administrador. */
     suspend fun obtener(id: Int, usuarioId: Int, rol: String): PublicacionResponse {
         val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
-        val visible = (anuncio.estado == ESTADO_PUBLICADA && anuncio.activa) ||
-            anuncio.vendedor.id == usuarioId || rol in ROLES_ADMIN
+        // El dueño y los administradores siempre lo ven; los demás, solo si es público
+        // (publicado, activo y de una cuenta que no está desactivada ni por eliminarse)
+        val visible = anuncio.vendedor.id == usuarioId || rol in ROLES_ADMIN || repositorio.esVisible(id)
         if (!visible) throw NoEncontradoException("El anuncio no existe")
         return anuncio
     }

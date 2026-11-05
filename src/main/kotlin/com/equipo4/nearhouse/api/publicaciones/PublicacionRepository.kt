@@ -57,7 +57,9 @@ class PublicacionRepository(private val dataSource: DataSource) {
     suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             val filtros = buildList {
-                if (soloPublicadas) add("p.t_estado_publicacion = 'PUBLICADA' AND p.b_estatus_publicacion")
+                // Lo que ve el público sale de vw_publicacion_visible (migración 08): publicado, activo
+                // y de un dueño activo. Así no salen los anuncios de cuentas desactivadas, por eliminarse o suspendidas.
+                if (soloPublicadas) add("EXISTS (SELECT 1 FROM vw_publicacion_visible v WHERE v.pke_id_publicacion = p.pke_id_publicacion)")
                 if (estado != null) add("p.t_estado_publicacion = ?")
                 if (usuarioId != null) add("p.fke_id_usuario = ?")
             }
@@ -73,6 +75,16 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 }
             }
         }
+
+    /** Si el público puede ver el anuncio: está en vw_publicacion_visible (publicado, activo y de una cuenta activa). */
+    suspend fun esVisible(id: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT 1 FROM vw_publicacion_visible WHERE pke_id_publicacion = ?").use { ps ->
+                ps.setInt(1, id)
+                ps.executeQuery().use { it.next() }
+            }
+        }
+    }
 
     suspend fun buscarPorId(id: Int): PublicacionResponse? = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->

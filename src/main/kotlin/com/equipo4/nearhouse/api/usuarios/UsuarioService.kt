@@ -8,6 +8,7 @@ import com.equipo4.nearhouse.api.auth.PasswordHasher
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuentaDesactivadaException
+import com.equipo4.nearhouse.api.common.CuentaEnEliminacionException
 import com.equipo4.nearhouse.api.common.DemasiadasSolicitudesException
 import com.equipo4.nearhouse.api.common.NoAutorizadoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
@@ -24,6 +25,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.slf4j.LoggerFactory
 
 @Serializable
 data class GoogleProofResponse(
@@ -45,6 +47,8 @@ class UsuarioService(
     private val codigos: CodigosCorreo,
     private val enviador: EnviadorCorreo,
 ) {
+
+    private val log = LoggerFactory.getLogger(UsuarioService::class.java)
 
     /** Solicita código de verificación por correo. */
     suspend fun solicitarCodigoCorreo(correo: String) {
@@ -97,6 +101,11 @@ class UsuarioService(
 
             if (!usuarioActualizado.activo) {
                 throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
+            }
+
+            // Pidió eliminar su cuenta: antes de entrar, debe elegir conservarla (reactivar = true)
+            usuarioActualizado.fechaEliminacionProgramada?.let { fecha ->
+                if (!reactivar) throw CuentaEnEliminacionException(formatearFechaColima(fecha))
             }
 
             if (usuarioActualizado.fechaDesactivacion != null) {
@@ -282,6 +291,11 @@ class UsuarioService(
             throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
         }
 
+        // Pidió eliminar su cuenta: antes de entrar, debe elegir conservarla (reactivar = true)
+        usuario.fechaEliminacionProgramada?.let { fecha ->
+            if (!req.reactivar) throw CuentaEnEliminacionException(formatearFechaColima(fecha))
+        }
+
         if (usuario.fechaDesactivacion != null) {
             if (!req.reactivar) {
                 throw CuentaDesactivadaException()
@@ -422,27 +436,93 @@ class UsuarioService(
             throw ProhibidoException("Un administrador no puede desactivar su cuenta")
         }
 
-        if (usuario.contrasenaHash != null) {
-            val contrasenaInput = req.contrasena
-            if (contrasenaInput.isNullOrBlank() || !PasswordHasher.verificar(contrasenaInput, usuario.contrasenaHash)) {
-                throw ValidacionException(listOf("La contraseña actual es incorrecta"))
-            }
-        } else if (usuario.googleId != null) {
-            val googleToken = req.googleToken
-            if (googleToken.isNullOrBlank()) {
-                throw ValidacionException(listOf("El token de Google es requerido"))
-            }
-            val payload = firebaseTokenVerifier.verifyToken(googleToken)
-            if (payload == null || (payload.googleId != usuario.googleId && payload.email.lowercase() != usuario.correo.lowercase())) {
-                throw ValidacionException(listOf("La verificación de Google no corresponde a esta cuenta"))
-            }
-        }
+        confirmarIdentidad(usuario, req)
 
         repositorio.desactivarCuenta(usuarioId)
 
         try {
             enviador.enviar(PlantillasCorreo.cuentaDesactivada(usuario.correo))
         } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Programa la eliminación de la cuenta (previa verificación de identidad).
+     * La cuenta queda desactivada desde ya y se borra en [DIAS_PARA_ELIMINAR] días,
+     * a menos que el usuario inicie sesión antes y elija conservarla.
+     */
+    suspend fun solicitarEliminacion(usuarioId: Int, req: DesactivarCuentaRequest): EliminacionProgramadaResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        if (usuario.rol.lowercase().contains("admin")) {
+            throw ProhibidoException("Un administrador no puede eliminar su cuenta")
+        }
+
+        confirmarIdentidad(usuario, req)
+
+        val fecha = repositorio.programarEliminacion(usuarioId, DIAS_PARA_ELIMINAR)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+        val fechaTexto = formatearFechaColima(fecha)
+
+        try {
+            enviador.enviar(PlantillasCorreo.eliminacionProgramada(usuario.correo, fechaTexto))
+        } catch (_: Exception) {
+            // Si el correo falla, la eliminación queda programada igual
+        }
+
+        return EliminacionProgramadaResponse(
+            // Con la hora de Colima, para que la fecha (día) sea la correcta aunque el servidor esté en UTC
+            fechaEliminacion = fecha.atZoneSameInstant(ZoneId.of("America/Mexico_City")).toOffsetDateTime().toString(),
+            fechaEliminacionTexto = fechaTexto,
+        )
+    }
+
+    /**
+     * Borra de verdad las cuentas cuya fecha de eliminación ya llegó y les manda el aviso final.
+     * La API lo corre al arrancar y cada 24 horas (Application.kt). Regresa cuántas borró.
+     */
+    suspend fun purgarCuentasVencidas(): Int {
+        var borradas = 0
+        for ((id, correo) in repositorio.cuentasPorEliminar()) {
+            try {
+                if (repositorio.eliminarDefinitivamente(id)) {
+                    borradas++
+                    try {
+                        enviador.enviar(PlantillasCorreo.cuentaEliminada(correo))
+                    } catch (_: Exception) {
+                        // La cuenta ya se borró; si el aviso falla no pasa nada más
+                    }
+                }
+            } catch (e: Exception) {
+                log.error("No se pudo eliminar la cuenta {}: {}", id, e.message)
+            }
+        }
+        return borradas
+    }
+
+    /**
+     * Confirma que quien pide desactivar o eliminar es el dueño de la cuenta:
+     * con su contraseña o, si la cuenta es de Google y no tiene contraseña, con un token de Google.
+     */
+    private suspend fun confirmarIdentidad(usuario: Usuario, req: DesactivarCuentaRequest) {
+        val hash = usuario.contrasenaHash
+        if (hash != null) {
+            val contrasenaInput = req.contrasena
+            val correcta = !contrasenaInput.isNullOrBlank() &&
+                withContext(Dispatchers.Default) { PasswordHasher.verificar(contrasenaInput, hash) }
+            if (!correcta) {
+                throw ValidacionException(listOf("La contraseña actual es incorrecta"))
+            }
+        } else if (usuario.googleId != null) {
+            val googleToken = req.googleToken
+            if (googleToken.isNullOrBlank()) {
+                throw ValidacionException(listOf("Confirma con tu cuenta de Google"))
+            }
+            val payload = firebaseTokenVerifier.verifyToken(googleToken)
+            if (payload == null || (payload.googleId != usuario.googleId && payload.email.lowercase() != usuario.correo.lowercase())) {
+                throw ValidacionException(listOf("La cuenta de Google que elegiste no es la de esta cuenta"))
+            }
         }
     }
 
@@ -500,6 +580,11 @@ class UsuarioService(
         val primeraLetra = usuario.take(1)
         return "$primeraLetra•••@$dominio"
     }
+
+    /** "5 de diciembre de 2026", con la hora de Colima. */
+    private fun formatearFechaColima(fecha: OffsetDateTime): String =
+        fecha.atZoneSameInstant(ZoneId.of("America/Mexico_City"))
+            .format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("es", "MX")))
 
     private fun formatearFechaHoraColima(ahora: OffsetDateTime): String {
         val zoneId = ZoneId.of("America/Mexico_City")
@@ -616,6 +701,8 @@ class UsuarioService(
     private fun soloDigitos(s: String) = s.filter { it.isDigit() }
 
     private companion object {
+        /** Días que pasan entre pedir eliminar la cuenta y que se borre de verdad. */
+        const val DIAS_PARA_ELIMINAR = 30
         const val MIN_CONTRASENA = 6
         const val MAX_CONTRASENA_BYTES = 72
         const val MAX_TEXTO = 80

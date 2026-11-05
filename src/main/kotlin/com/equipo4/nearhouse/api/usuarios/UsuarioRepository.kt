@@ -135,18 +135,101 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
-    /** Reactiva una cuenta desactivada eliminando fh_desactivacion_usuario. */
+    /**
+     * Reactiva una cuenta desactivada. Si estaba por eliminarse, también cancela la eliminación
+     * (las dos fechas se quitan juntas: la base no permite eliminación programada sin desactivación).
+     */
     suspend fun reactivarCuenta(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
             val sql = """
                 UPDATE usuario
                 SET fh_desactivacion_usuario = NULL,
+                    fh_eliminacion_programada_usuario = NULL,
                     fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
                 WHERE pke_id_usuario = ?
             """
             conn.prepareStatement(sql).use { ps ->
                 ps.setInt(1, idUsuario)
                 ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /**
+     * Programa la eliminación de la cuenta: queda desactivada desde ahora (sus anuncios dejan de verse)
+     * y se borra en [dias] días. Sube la versión de sesión para cerrar todas sus sesiones.
+     * Regresa la fecha en que se borrará, o null si el usuario no existe.
+     */
+    suspend fun programarEliminacion(idUsuario: Int, dias: Int): OffsetDateTime? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET fh_desactivacion_usuario = COALESCE(fh_desactivacion_usuario, CURRENT_TIMESTAMP),
+                    fh_eliminacion_programada_usuario = CURRENT_TIMESTAMP + make_interval(days => ?),
+                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+                RETURNING fh_eliminacion_programada_usuario
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, dias)
+                ps.setInt(2, idUsuario)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) rs.getObject(1, OffsetDateTime::class.java) else null
+                }
+            }
+        }
+    }
+
+    /** Cuentas cuya fecha de eliminación ya llegó: id y correo (para mandarles el aviso final). */
+    suspend fun cuentasPorEliminar(): List<Pair<Int, String>> = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                SELECT pke_id_usuario, t_correo_usuario
+                FROM usuario
+                WHERE fh_eliminacion_programada_usuario <= CURRENT_TIMESTAMP
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.executeQuery().use { rs ->
+                    buildList { while (rs.next()) add(rs.getInt(1) to rs.getString(2)) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Borra la cuenta de verdad con fn_eliminar_usuario (migración 08): sus anuncios, fotos y reportes,
+     * y deja vacíos los datos donde aparecía en registros de otros.
+     * Vuelve a revisar la fecha dentro de la misma transacción: si el usuario inició sesión y la
+     * conservó en ese momento, no se borra. Regresa true si la borró.
+     */
+    suspend fun eliminarDefinitivamente(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            try {
+                val vencida = conn.prepareStatement(
+                    """
+                    SELECT 1 FROM usuario
+                    WHERE pke_id_usuario = ? AND fh_eliminacion_programada_usuario <= CURRENT_TIMESTAMP
+                    FOR UPDATE
+                    """
+                ).use { ps ->
+                    ps.setInt(1, idUsuario)
+                    ps.executeQuery().use { it.next() }
+                }
+                if (vencida) {
+                    conn.prepareStatement("SELECT fn_eliminar_usuario(?)").use { ps ->
+                        ps.setInt(1, idUsuario)
+                        ps.execute()
+                    }
+                }
+                conn.commit()
+                vencida
+            } catch (e: Exception) {
+                conn.rollback()
+                throw e
+            } finally {
+                conn.autoCommit = true
             }
         }
     }
@@ -361,7 +444,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
         contrasenaHash = getString("t_contrasena_usuario"),
         googleId = getString("t_google_id_usuario"),
         rol = getString("t_nombre_rol"),
-        activo = getBoolean("b_estatus_usuario"),
+        activo = getBoolean("b_cuenta_activa"),
         correoVerificado = getBoolean("b_correo_verificado_usuario"),
         telefonoVerificado = getBoolean("b_telefono_verificado_usuario"),
         fechaRegistro = getObject("fh_fecha_registro_usuario", OffsetDateTime::class.java).toString(),
@@ -380,11 +463,15 @@ class UsuarioRepository(private val dataSource: DataSource) {
     )
 
     private companion object {
-        // b_tiene_foto se calcula en SQL para no traer los bytes de la foto en cada consulta
+        // b_tiene_foto se calcula en SQL para no traer los bytes de la foto en cada consulta.
+        // b_cuenta_activa: no está suspendida por un administrador. Desde la migración 11 ya no existe
+        // b_estatus_usuario; la suspensión dura hasta fh_suspension_hasta_usuario (vacío = nunca suspendida).
         const val SELECT_BASE = """
             SELECT u.pke_id_usuario, u.t_nombre_usuario, u.t_primer_apellido_usuario,
                    u.t_segundo_apellido_usuario, u.t_correo_usuario, u.t_telefono_usuario,
-                   u.t_contrasena_usuario, u.t_google_id_usuario, u.b_estatus_usuario,
+                   u.t_contrasena_usuario, u.t_google_id_usuario,
+                   (u.fh_suspension_hasta_usuario IS NULL
+                    OR u.fh_suspension_hasta_usuario <= CURRENT_TIMESTAMP) AS b_cuenta_activa,
                    u.b_correo_verificado_usuario, u.b_telefono_verificado_usuario,
                    u.fh_fecha_registro_usuario, u.fh_fecha_foto_usuario,
                    (u.by_foto_usuario IS NOT NULL) AS b_tiene_foto,

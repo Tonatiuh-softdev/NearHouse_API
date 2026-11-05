@@ -71,6 +71,15 @@ data class DesactivarCuentaRequest(
     val googleToken: String? = null
 )
 
+/** Respuesta de POST /usuarios/me/eliminar: cuándo se borrará la cuenta. */
+@Serializable
+data class EliminacionProgramadaResponse(
+    /** Fecha y hora en formato ISO-8601 (por ejemplo 2026-12-05T11:20:00-06:00). */
+    val fechaEliminacion: String,
+    /** La misma fecha lista para mostrar: "5 de diciembre de 2026". */
+    val fechaEliminacionTexto: String,
+)
+
 @Serializable
 data class VerificarCodigoContrasenaRequest(
     val codigo: String

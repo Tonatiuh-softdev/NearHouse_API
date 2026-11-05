@@ -105,6 +105,12 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             call.respond(HttpStatusCode.NoContent)
         }
 
+        // POST /api/v1/usuarios/me/eliminar -> programa la eliminación de la cuenta (se borra en 30 días)
+        post("/usuarios/me/eliminar") {
+            val req = call.recibir<DesactivarCuentaRequest>()
+            call.respond(HttpStatusCode.OK, service.solicitarEliminacion(call.usuarioId(), req))
+        }
+
         // POST /api/v1/usuarios/me/contrasena/codigo -> Solicita código para cambiar/crear contraseña
         post("/usuarios/me/contrasena/codigo") {
             val respuesta = service.solicitarCodigoContrasena(call.usuarioId())

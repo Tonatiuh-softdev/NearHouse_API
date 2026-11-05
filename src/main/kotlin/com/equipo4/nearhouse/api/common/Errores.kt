@@ -43,6 +43,13 @@ class CuentaDesactivadaException(
     message: String = "Tu cuenta está desactivada. ¿Quieres reactivarla?"
 ) : ApiException(HttpStatusCode.Conflict, message, codigo = "CUENTA_DESACTIVADA")
 
+/** 409: el usuario pidió eliminar su cuenta y todavía no llega la fecha. Puede conservarla con reactivar = true. */
+class CuentaEnEliminacionException(fecha: String) : ApiException(
+    HttpStatusCode.Conflict,
+    "Tu cuenta se eliminará el $fecha. ¿Quieres conservarla?",
+    codigo = "CUENTA_EN_ELIMINACION"
+)
+
 class DemasiadosIntentosException(message: String) :
     ApiException(HttpStatusCode.TooManyRequests, message)
 

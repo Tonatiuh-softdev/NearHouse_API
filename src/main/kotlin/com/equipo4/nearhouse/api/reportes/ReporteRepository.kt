@@ -25,8 +25,8 @@ class ReporteRepository(private val dataSource: DataSource) {
         dataSource.connection.use { conn ->
             conn.prepareStatement(
                 """
-                SELECT fke_id_usuario FROM publicacion
-                WHERE pke_id_publicacion = ? AND t_estado_publicacion = 'PUBLICADA' AND b_estatus_publicacion
+                SELECT fke_id_usuario FROM vw_publicacion_visible
+                WHERE pke_id_publicacion = ?
                 """.trimIndent()
             ).use { ps ->
                 ps.setInt(1, publicacionId)

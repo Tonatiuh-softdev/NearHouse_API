@@ -24,8 +24,12 @@ import com.equipo4.nearhouse.api.verificacion.EnviadorCorreoBrevo
 import com.equipo4.nearhouse.api.verificacion.EnviadorCorreoConsola
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
+import io.ktor.server.application.log
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
  * Punto de entrada de la API. Lee la configuración de las variables de entorno
@@ -74,6 +78,20 @@ fun Application.module(config: AppConfig) {
         codigos = codigosCorreo,
         enviador = enviadorCorreo,
     )
+
+    // Cuentas que pidieron eliminarse: se borran de verdad cuando llega su fecha.
+    // Se revisa al arrancar y luego cada 24 horas. Si la API se apaga, se detiene sola.
+    launch {
+        while (isActive) {
+            try {
+                val borradas = usuarioService.purgarCuentasVencidas()
+                if (borradas > 0) log.info("Cuentas eliminadas definitivamente: {}", borradas)
+            } catch (e: Exception) {
+                log.error("Falló la limpieza de cuentas por eliminar: {}", e.message)
+            }
+            delay(24 * 60 * 60 * 1000L)
+        }
+    }
 
     // Catálogo de colonias para el filtro de Ubicación
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
