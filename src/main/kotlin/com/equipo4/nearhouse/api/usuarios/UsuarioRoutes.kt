@@ -125,6 +125,20 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             call.respond(HttpStatusCode.OK, respuesta)
         }
 
+        // POST /api/v1/usuarios/me/correo/solicitar-codigo -> Solicita código para cambiar correo
+        post("/usuarios/me/correo/solicitar-codigo") {
+            val req = call.recibir<SolicitarCodigoCambioCorreoRequest>()
+            service.solicitarCodigoCambioCorreo(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK)
+        }
+
+        // POST /api/v1/usuarios/me/correo/confirmar -> Confirma cambio de correo
+        post("/usuarios/me/correo/confirmar") {
+            val req = call.recibir<ConfirmarCambioCorreoRequest>()
+            val respuesta = service.confirmarCambioCorreo(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK, respuesta)
+        }
+
         // PUT /api/v1/usuarios/me/foto -> sube la foto (multipart, campo "foto")
         put("/usuarios/me/foto") {
             val bytes = call.recibirFoto()
