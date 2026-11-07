@@ -1,5 +1,7 @@
 package com.equipo4.nearhouse.api.plugins
 
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
+import com.equipo4.nearhouse.api.admin.usuarios.adminUsuarioRoutes
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.colonias.coloniaRoutes
 import com.equipo4.nearhouse.api.publicaciones.PublicacionService
@@ -32,6 +34,7 @@ fun Application.configureRouting(
     coloniaService: ColoniaService,
     publicacionService: PublicacionService,
     reporteService: ReporteService,
+    adminUsuarioService: AdminUsuarioService,
 ) {
     routing {
         get("/") {
@@ -63,6 +66,7 @@ fun Application.configureRouting(
             coloniaRoutes(coloniaService)
             publicacionRoutes(publicacionService)
             reporteRoutes(reporteService)
+            adminUsuarioRoutes(adminUsuarioService)
         }
     }
 }

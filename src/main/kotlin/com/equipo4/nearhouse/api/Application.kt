@@ -30,6 +30,8 @@ import io.ktor.server.netty.Netty
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioRepository
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 
 /**
  * Punto de entrada de la API. Lee la configuración de las variables de entorno
@@ -102,10 +104,13 @@ fun Application.module(config: AppConfig) {
     // Reportes de publicaciones
     val reporteService = ReporteService(ReporteRepository(dataSource))
 
+    // Panel de administración: cuentas de usuarios
+    val adminUsuarioService = AdminUsuarioService(AdminUsuarioRepository(dataSource))
+
     // Plugins
     configureSerialization()
     configureMonitoring()
     configureStatusPages()
     configureSecurity(jwtService, usuarioRepository)
-    configureRouting(dataSource, usuarioService, coloniaService, publicacionService, reporteService)
+    configureRouting(dataSource, usuarioService, coloniaService, publicacionService, reporteService, adminUsuarioService)
 }
