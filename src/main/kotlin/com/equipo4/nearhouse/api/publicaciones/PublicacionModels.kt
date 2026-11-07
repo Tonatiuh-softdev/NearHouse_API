@@ -93,12 +93,19 @@ class FotoNueva(val bytes: ByteArray, val tipo: String)
 
 // ---------- Consulta de anuncios (home y administrador) ----------
 
+/**
+ * Datos del vendedor que se mandan con cada anuncio.
+ * [tieneFoto] y [fotoVersion] permiten mostrar su foto sin cargar los bytes aquí:
+ * la imagen se pide a GET /api/v1/usuarios/{id}/foto, y [fotoVersion] cambia cuando sube otra.
+ */
 @Serializable
 data class VendedorResponse(
     val id: Int,
     val nombre: String,
     val correo: String,
-    val telefono: String
+    val telefono: String,
+    val tieneFoto: Boolean,
+    val fotoVersion: Long?
 )
 
 /** Datos de la revisión del administrador (solo si el anuncio ya fue revisado). */

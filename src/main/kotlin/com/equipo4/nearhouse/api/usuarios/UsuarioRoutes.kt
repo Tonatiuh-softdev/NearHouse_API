@@ -22,6 +22,8 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
+import io.ktor.http.CacheControl
+import io.ktor.server.response.cacheControl
 
 /**
  * Rutas de usuarios. Solo traducen HTTP <-> servicio:
@@ -82,6 +84,15 @@ fun Route.usuarioRoutes(service: UsuarioService) {
     // GET /api/v1/planes -> público, planes activos del más barato al más caro
     get("/planes") {
         call.respond(service.listarPlanes())
+    }
+
+    // GET /api/v1/usuarios/{id}/foto -> foto pública de un usuario (la ven los compradores en los anuncios)
+    get("/usuarios/{id}/foto") {
+        val id = call.parameters["id"]?.toIntOrNull()
+            ?: throw ValidacionException(listOf("El id no es válido"))
+        val foto = service.obtenerFoto(id)
+        call.response.cacheControl(CacheControl.MaxAge(maxAgeSeconds = 86400, visibility = CacheControl.Visibility.Public))
+        call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
     }
 
     // Rutas que exigen token: Authorization: Bearer <token>
