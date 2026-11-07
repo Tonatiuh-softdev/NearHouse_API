@@ -71,15 +71,6 @@ data class DesactivarCuentaRequest(
     val googleToken: String? = null
 )
 
-/** Respuesta de POST /usuarios/me/eliminar: cuándo se borrará la cuenta. */
-@Serializable
-data class EliminacionProgramadaResponse(
-    /** Fecha y hora en formato ISO-8601 (por ejemplo 2026-12-05T11:20:00-06:00). */
-    val fechaEliminacion: String,
-    /** La misma fecha lista para mostrar: "5 de diciembre de 2026". */
-    val fechaEliminacionTexto: String,
-)
-
 @Serializable
 data class VerificarCodigoContrasenaRequest(
     val codigo: String
@@ -103,6 +94,33 @@ data class SolicitarCodigoCambioCorreoRequest(
 data class ConfirmarCambioCorreoRequest(
     val correoNuevo: String,
     val codigo: String
+)
+
+@Serializable
+data class SolicitarCodigoRecuperarRequest(
+    val correo: String
+)
+
+@Serializable
+data class SolicitarCodigoRecuperarResponse(
+    val mensaje: String = "Si el correo está registrado, te enviamos un código"
+)
+
+@Serializable
+data class VerificarCodigoRecuperarRequest(
+    val correo: String,
+    val codigo: String
+)
+
+@Serializable
+data class VerificarCodigoRecuperarResponse(
+    val comprobante: String
+)
+
+@Serializable
+data class NuevaContrasenaRecuperarRequest(
+    val comprobante: String,
+    val contrasenaNueva: String
 )
 
 /** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
