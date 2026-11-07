@@ -276,3 +276,4 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
     private fun nombreCompleto(nombre: String, primer: String, segundo: String?): String =
         listOfNotNull(nombre, primer, segundo?.takeIf { it.isNotBlank() }).joinToString(" ")
 }
+/** ola. */
