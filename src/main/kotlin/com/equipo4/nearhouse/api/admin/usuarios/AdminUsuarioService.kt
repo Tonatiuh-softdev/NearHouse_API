@@ -1,6 +1,7 @@
 package com.equipo4.nearhouse.api.admin.usuarios
 
 import com.equipo4.nearhouse.api.auth.Roles
+import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
@@ -68,6 +69,46 @@ class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
     suspend fun foto(rol: String, id: Int): FotoPerfil {
         exigirAdmin(rol)
         return repositorio.buscarFoto(id) ?: throw NoEncontradoException("El usuario no tiene foto de perfil")
+    }
+
+    /** Suspende una cuenta. No se puede suspender a uno mismo ni a otro administrador. */
+    suspend fun suspender(rol: String, idAdmin: Int, idUsuario: Int, req: SuspenderUsuarioRequest) {
+        exigirAdmin(rol)
+        if (idAdmin == idUsuario) throw ProhibidoException("No puedes suspender tu propia cuenta")
+
+        val motivo = req.motivo.trim()
+        val errores = mutableListOf<String>()
+        if (motivo.isEmpty() || motivo.length > 300) errores += "El motivo debe tener entre 1 y 300 caracteres"
+        if (req.dias != null && req.dias !in 1..365) errores += "Los días van de 1 a 365, o vacío para indefinida"
+        if (errores.isNotEmpty()) throw ValidacionException(errores)
+
+        val objetivo = repositorio.estatusDe(idUsuario) ?: throw NoEncontradoException("El usuario no existe")
+        if (objetivo == "SUSPENDIDO") throw ConflictoException("Esta cuenta ya está suspendida")
+        if (repositorio.rolDe(idUsuario) in ROLES_ADMIN) {
+            throw ProhibidoException("No puedes suspender a otro administrador")
+        }
+
+        repositorio.suspender(idAdmin, idUsuario, req.dias, motivo)
+    }
+
+    /** Quita la suspensión de una cuenta. */
+    suspend fun levantarSuspension(rol: String, idUsuario: Int) {
+        exigirAdmin(rol)
+        val objetivo = repositorio.estatusDe(idUsuario) ?: throw NoEncontradoException("El usuario no existe")
+        if (objetivo != "SUSPENDIDO") throw ConflictoException("Esta cuenta no está suspendida")
+        repositorio.levantarSuspension(idUsuario)
+    }
+
+    /** Borra la cuenta y sus datos. No se puede eliminar a uno mismo ni a otro administrador. */
+    suspend fun eliminar(rol: String, idAdmin: Int, idUsuario: Int) {
+        exigirAdmin(rol)
+        if (idAdmin == idUsuario) throw ProhibidoException("No puedes eliminar tu propia cuenta")
+
+        repositorio.estatusDe(idUsuario) ?: throw NoEncontradoException("El usuario no existe")
+        if (repositorio.rolDe(idUsuario) in ROLES_ADMIN) {
+            throw ProhibidoException("No puedes eliminar a otro administrador")
+        }
+        repositorio.eliminar(idUsuario)
     }
 
     private fun exigirAdmin(rol: String) {
