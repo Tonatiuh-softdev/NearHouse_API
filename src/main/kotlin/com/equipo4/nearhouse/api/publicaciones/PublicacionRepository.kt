@@ -1,5 +1,6 @@
 package com.equipo4.nearhouse.api.publicaciones
 
+import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ValidacionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -12,7 +13,6 @@ import java.sql.SQLException
 import java.sql.Types
 import java.time.OffsetDateTime
 import javax.sql.DataSource
-import com.equipo4.nearhouse.api.common.NoEncontradoException
 
 /**
  * Única capa que habla con PostgreSQL para crear anuncios.
@@ -165,7 +165,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
-        /**
+    /**
      * Reemplaza los datos de un anuncio propio y lo manda otra vez a revisión.
      * Todo en una transacción: si algo falla, el anuncio queda como estaba.
      */
@@ -317,6 +317,10 @@ class PublicacionRepository(private val dataSource: DataSource) {
         val revisor = getString("revisor_nombre")?.let { nombre ->
             listOfNotNull(nombre, getString("revisor_apellido1")).joinToString(" ")
         }
+        // wasNull() solo sirve justo después de leer la columna, por eso se revisa antes de hacer otra lectura
+        val versionFotoLeida = getLong("vendedor_foto_version")
+        val versionFoto = if (wasNull()) null else versionFotoLeida
+
         return PublicacionResponse(
             id = getInt("pke_id_publicacion"),
             titulo = getString("t_nombre_publicacion"),
@@ -350,7 +354,9 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 id = getInt("fke_id_usuario"),
                 nombre = vendedor,
                 correo = getString("vendedor_correo"),
-                telefono = getString("vendedor_telefono")
+                telefono = getString("vendedor_telefono"),
+                tieneFoto = getBoolean("vendedor_tiene_foto"),
+                fotoVersion = versionFoto
             ),
             fechaRegistro = getObject("fh_fecha_publicacion", OffsetDateTime::class.java).toInstant().toEpochMilli(),
             revision = fechaRevision?.let {
@@ -500,62 +506,4 @@ class PublicacionRepository(private val dataSource: DataSource) {
     }
 
     /** Convierte los errores de PostgreSQL en mensajes entendibles para la app. */
-    private fun traducirError(e: SQLException): Exception {
-        val restriccion = (e as? PSQLException)?.serverErrorMessage?.constraint
-        return when (e.sqlState) {
-            "23514" -> ValidacionException(
-                listOf(
-                    when (restriccion) {
-                        "ck_publicacion_titulo" -> "El título debe tener entre 1 y 60 caracteres"
-                        "ck_publicacion_descripcion" -> "La descripción debe tener entre 30 y 1000 caracteres"
-                        "ck_publicacion_reglas" -> "Las reglas no pueden pasar de 300 caracteres"
-                        "ck_propiedad_codigo_postal" -> "El código postal debe tener 5 dígitos"
-                        "ck_foto_tamano" -> "Cada foto debe pesar entre 1 byte y 2 MB"
-                        "ck_foto_tipo" -> "Solo se aceptan fotos JPEG, PNG o WebP"
-                        else -> "La base de datos rechazó los datos ($restriccion)"
-                    }
-                )
-            )
-            "23503" -> ValidacionException(listOf("Falta un dato relacionado (usuario, modalidad o colonia)"))
-            else -> e
-        }
-    }
-
-    private companion object {
-        const val SELECT_PUBLICACION = """
-            SELECT p.pke_id_publicacion, p.fke_id_usuario, p.t_nombre_publicacion, p.t_descripcion_publicacion,
-                   p.t_reglas_publicacion, p.e_precio_publicacion, p.fh_fecha_publicacion,
-                   p.t_estado_publicacion, p.b_estatus_publicacion, p.t_motivo_rechazo_publicacion,
-                   p.fh_fecha_revision_publicacion,
-                   m.t_nombre_modalidad,
-                   pr.t_tipo_propiedad, pr.t_calle_propiedad, pr.t_numero_propiedad,
-                   pr.n_latitud_propiedad, pr.n_longitud_propiedad, pr.e_superficie_propiedad,
-                   pr.t_codigo_postal_propiedad,
-                   c.t_nombre_colonia,
-                   i.b_amueblado_inmueble, i.e_dormitorios_inmueble, i.e_banos_inmueble,
-                   i.b_mascotas_inmueble, i.e_cochera_inmueble, i.b_patio_inmueble,
-                   i.e_piso_inmueble, i.b_elevador_inmueble, i.e_niveles_inmueble,
-                   t.t_uso_suelo_terreno,
-                   u.t_nombre_usuario AS vendedor_nombre,
-                   u.t_primer_apellido_usuario AS vendedor_apellido1,
-                   u.t_segundo_apellido_usuario AS vendedor_apellido2,
-                   u.t_correo_usuario AS vendedor_correo,
-                   u.t_telefono_usuario AS vendedor_telefono,
-                   r.t_nombre_usuario AS revisor_nombre,
-                   r.t_primer_apellido_usuario AS revisor_apellido1,
-                   COALESCE(
-                       (SELECT array_agg(f.pke_id_foto ORDER BY f.e_orden_visibilidad_foto)
-                        FROM foto f WHERE f.fke_id_propiedad = pr.pke_id_propiedad),
-                       ARRAY[]::int[]
-                   ) AS fotos
-            FROM publicacion p
-            JOIN modalidad m ON m.pke_id_modalidad = p.fke_id_modalidad
-            JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
-            JOIN colonia c ON c.pke_id_colonia = pr.fke_id_colonia
-            LEFT JOIN inmueble i ON i.fke_id_propiedad = pr.pke_id_propiedad
-            LEFT JOIN terreno t ON t.fke_id_propiedad = pr.pke_id_propiedad
-            JOIN usuario u ON u.pke_id_usuario = p.fke_id_usuario
-            LEFT JOIN usuario r ON r.pke_id_usuario = p.fke_id_usuario_revision
-        """
-    }
-}
+    private fun traducirError(e: SQLException):
