@@ -22,6 +22,8 @@ import kotlinx.serialization.Serializable
 import javax.sql.DataSource
 import com.equipo4.nearhouse.api.notificaciones.NotificacionService
 import com.equipo4.nearhouse.api.notificaciones.notificacionRoutes
+import com.equipo4.nearhouse.api.notificaciones.DispositivoService
+import com.equipo4.nearhouse.api.notificaciones.dispositivoRoutes
 
 @Serializable
 data class InfoResponse(val nombre: String, val version: String)
@@ -38,6 +40,7 @@ fun Application.configureRouting(
     reporteService: ReporteService,
     adminUsuarioService: AdminUsuarioService,
     notificacionService: NotificacionService,
+    dispositivoService: DispositivoService,   // ← agregado
 ) {
     routing {
         get("/") {
@@ -71,6 +74,7 @@ fun Application.configureRouting(
             reporteRoutes(reporteService)
             adminUsuarioRoutes(adminUsuarioService)
             notificacionRoutes(notificacionService)
+            dispositivoRoutes(dispositivoService)   // ← agregado
         }
     }
 }
