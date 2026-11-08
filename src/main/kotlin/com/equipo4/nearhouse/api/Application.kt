@@ -1,5 +1,7 @@
 package com.equipo4.nearhouse.api
 
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioRepository
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
 import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
@@ -7,6 +9,8 @@ import com.equipo4.nearhouse.api.colonias.ColoniaRepository
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
+import com.equipo4.nearhouse.api.notificaciones.NotificacionRepository
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
 import com.equipo4.nearhouse.api.plugins.configureMonitoring
 import com.equipo4.nearhouse.api.plugins.configureRouting
 import com.equipo4.nearhouse.api.plugins.configureSecurity
@@ -30,8 +34,6 @@ import io.ktor.server.netty.Netty
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioRepository
-import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 
 /**
  * Punto de entrada de la API. Lee la configuración de las variables de entorno
@@ -53,7 +55,7 @@ fun Application.module(config: AppConfig) {
     val dataSource = DatabaseFactory.createDataSource(config)
     monitor.subscribe(ApplicationStopped) { dataSource.close() }
 
-    // Servicios
+    // Servicios base
     val jwtService = JwtService(config)
 
     // Verificación de Google y comprobantes. Todo sale de config, no de System.getenv
@@ -81,15 +83,21 @@ fun Application.module(config: AppConfig) {
         enviador = enviadorCorreo,
     )
 
-    // Cuentas que pidieron eliminarse: se borran de verdad cuando llega su fecha.
+    // Notificaciones: se crean aquí, antes de los ciclos que las usan
+    val notificacionService = NotificacionService(NotificacionRepository(dataSource))
+
+    // Limpieza diaria: cuentas por eliminar y notificaciones antiguas.
     // Se revisa al arrancar y luego cada 24 horas. Si la API se apaga, se detiene sola.
     launch {
         while (isActive) {
             try {
-                val borradas = usuarioService.purgarCuentasVencidas()
-                if (borradas > 0) log.info("Cuentas eliminadas definitivamente: {}", borradas)
+                val cuentasBorradas = usuarioService.purgarCuentasVencidas()
+                if (cuentasBorradas > 0) log.info("Cuentas eliminadas definitivamente: {}", cuentasBorradas)
+
+                val notifBorradas = notificacionService.limpiar()
+                if (notifBorradas > 0) log.info("Notificaciones antiguas borradas: {}", notifBorradas)
             } catch (e: Exception) {
-                log.error("Falló la limpieza de cuentas por eliminar: {}", e.message)
+                log.error("Falló la limpieza diaria: {}", e.message)
             }
             delay(24 * 60 * 60 * 1000L)
         }
@@ -112,5 +120,13 @@ fun Application.module(config: AppConfig) {
     configureMonitoring()
     configureStatusPages()
     configureSecurity(jwtService, usuarioRepository)
-    configureRouting(dataSource, usuarioService, coloniaService, publicacionService, reporteService, adminUsuarioService)
+    configureRouting(
+        dataSource,
+        usuarioService,
+        coloniaService,
+        publicacionService,
+        reporteService,
+        adminUsuarioService,
+        notificacionService,
+    )
 }
