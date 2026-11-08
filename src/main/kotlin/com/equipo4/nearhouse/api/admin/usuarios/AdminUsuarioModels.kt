@@ -74,3 +74,10 @@ data class ConteoPublicaciones(
     val publicadas: Int,
     val rechazadas: Int
 )
+
+@Serializable
+data class SuspenderUsuarioRequest(
+    /** 1 a 365 días. Vacío = indefinida (hasta que un administrador la reactive). */
+    val dias: Int? = null,
+    val motivo: String
+)

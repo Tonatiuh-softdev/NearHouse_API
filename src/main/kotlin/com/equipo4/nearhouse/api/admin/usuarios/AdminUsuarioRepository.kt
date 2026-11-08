@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.sql.PreparedStatement
 import java.sql.ResultSet
+import java.sql.Types
 import java.time.OffsetDateTime
 import javax.sql.DataSource
 
@@ -142,6 +143,61 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Suspende la cuenta con fn_suspender_usuario (migración 11). Los días vacíos = indefinida. */
+    suspend fun suspender(idAdmin: Int, idUsuario: Int, dias: Int?, motivo: String): Unit = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT fn_suspender_usuario(?, ?, ?, ?)").use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.setInt(2, idAdmin)
+                if (dias == null) ps.setNull(3, Types.INTEGER) else ps.setInt(3, dias)
+                ps.setString(4, motivo)
+                ps.execute()
+            }
+        }
+    }
+
+    /** Quita la suspensión en este momento con fn_levantar_suspension (migración 11). */
+    suspend fun levantarSuspension(idUsuario: Int): Unit = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT fn_levantar_suspension(?)").use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.execute()
+            }
+        }
+    }
+
+    /** Borra la cuenta con sus publicaciones, fotos y reportes (fn_eliminar_usuario, migración 08). */
+    suspend fun eliminar(idUsuario: Int): Unit = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT fn_eliminar_usuario(?)").use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.execute()
+            }
+        }
+    }
+
+    /** Estatus actual de la cuenta, para validar antes de actuar. Null si no existe. */
+    suspend fun estatusDe(idUsuario: Int): String? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("SELECT estado FROM vw_usuario_estado WHERE id_usuario = ?").use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+            }
+        }
+    }
+
+    /** Rol de la cuenta (texto de la tabla rol). Null si no existe. */
+    suspend fun rolDe(idUsuario: Int): String? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(
+                "SELECT r.t_nombre_rol FROM usuario u JOIN rol r ON r.pke_id_rol = u.fke_id_rol WHERE u.pke_id_usuario = ?"
+            ).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+            }
+        }
+    }
+
     // ---------- Auxiliares ----------
 
     /** Arma el WHERE con los filtros. Todo valor va como parámetro (?), nunca concatenado. */
@@ -220,3 +276,4 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
     private fun nombreCompleto(nombre: String, primer: String, segundo: String?): String =
         listOfNotNull(nombre, primer, segundo?.takeIf { it.isNotBlank() }).joinToString(" ")
 }
+/** ola. */

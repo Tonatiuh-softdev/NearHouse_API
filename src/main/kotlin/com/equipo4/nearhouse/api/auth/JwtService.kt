@@ -65,6 +65,38 @@ class JwtService(private val config: AppConfig) {
         }
     }
 
+    /** Genera un comprobante JWT para recuperación de contraseña (10 min). */
+    fun generarComprobanteRecuperar(usuarioId: Int, versionSesion: Int): String {
+        val ahora = System.currentTimeMillis()
+        return JWT.create()
+            .withIssuer(config.jwtIssuer)
+            .withAudience(AUDIENCE_PROOF_RECUPERAR)
+            .withClaim(CLAIM_ID, usuarioId)
+            .withClaim(CLAIM_VERSION, versionSesion)
+            .withClaim(CLAIM_PROPOSITO, PROPOSITO_RECUPERAR)
+            .withIssuedAt(Date(ahora))
+            .withExpiresAt(Date(ahora + 10 * 60 * 1000)) // 10 minutos
+            .sign(algorithm)
+    }
+
+    /** Valida el comprobante de recuperación y regresa Pair(usuarioId, versionSesion) o null si es inválido. */
+    fun obtenerComprobanteRecuperar(token: String?): Pair<Int, Int>? {
+        if (token.isNullOrBlank()) return null
+        return try {
+            val verifierProof = JWT.require(algorithm)
+                .withIssuer(config.jwtIssuer)
+                .withAudience(AUDIENCE_PROOF_RECUPERAR)
+                .withClaim(CLAIM_PROPOSITO, PROPOSITO_RECUPERAR)
+                .build()
+            val decoded = verifierProof.verify(token)
+            val id = decoded.getClaim(CLAIM_ID).asInt()
+            val ver = decoded.getClaim(CLAIM_VERSION).asInt()
+            if (id != null && ver != null) Pair(id, ver) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** Genera un comprobante JWT firmado al verificar el código de correo. */
     fun generarComprobanteCorreo(correo: String): String {
         val ahora = System.currentTimeMillis()
@@ -96,6 +128,8 @@ class JwtService(private val config: AppConfig) {
         const val CLAIM_VERSION = "ver"
         const val CLAIM_PROPOSITO = "proposito"
         const val PROPOSITO_CONTRASENA = "contrasena"
+        const val PROPOSITO_RECUPERAR = "recuperar"
         const val AUDIENCE_PROOF_CONTRASENA = "nearhouse-proof-contrasena"
+        const val AUDIENCE_PROOF_RECUPERAR = "nearhouse-proof-recuperar"
     }
 }

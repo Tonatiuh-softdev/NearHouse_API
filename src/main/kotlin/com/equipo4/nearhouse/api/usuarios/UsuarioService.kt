@@ -8,7 +8,6 @@ import com.equipo4.nearhouse.api.auth.PasswordHasher
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuentaDesactivadaException
-import com.equipo4.nearhouse.api.common.CuentaEnEliminacionException
 import com.equipo4.nearhouse.api.common.DemasiadasSolicitudesException
 import com.equipo4.nearhouse.api.common.NoAutorizadoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
@@ -18,14 +17,16 @@ import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
 import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
 import com.equipo4.nearhouse.api.verificacion.MotivoCodigo
 import com.equipo4.nearhouse.api.verificacion.PlantillasCorreo
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import org.slf4j.LoggerFactory
 
 @Serializable
 data class GoogleProofResponse(
@@ -48,7 +49,11 @@ class UsuarioService(
     private val enviador: EnviadorCorreo,
 ) {
 
-    private val log = LoggerFactory.getLogger(UsuarioService::class.java)
+    private val logger = LoggerFactory.getLogger(UsuarioService::class.java)
+
+    suspend fun purgarCuentasVencidas(): Int {
+        return 0
+    }
 
     /** Solicita código de verificación por correo. */
     suspend fun solicitarCodigoCorreo(correo: String) {
@@ -101,11 +106,6 @@ class UsuarioService(
 
             if (!usuarioActualizado.activo) {
                 throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
-            }
-
-            // Pidió eliminar su cuenta: antes de entrar, debe elegir conservarla (reactivar = true)
-            usuarioActualizado.fechaEliminacionProgramada?.let { fecha ->
-                if (!reactivar) throw CuentaEnEliminacionException(formatearFechaColima(fecha))
             }
 
             if (usuarioActualizado.fechaDesactivacion != null) {
@@ -291,11 +291,6 @@ class UsuarioService(
             throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
         }
 
-        // Pidió eliminar su cuenta: antes de entrar, debe elegir conservarla (reactivar = true)
-        usuario.fechaEliminacionProgramada?.let { fecha ->
-            if (!req.reactivar) throw CuentaEnEliminacionException(formatearFechaColima(fecha))
-        }
-
         if (usuario.fechaDesactivacion != null) {
             if (!req.reactivar) {
                 throw CuentaDesactivadaException()
@@ -305,6 +300,93 @@ class UsuarioService(
 
         val usuarioFinal = repositorio.buscarPorId(usuario.id)!!
         return AuthResponse(token = jwtService.generarToken(usuarioFinal.id, usuarioFinal.rol, usuarioFinal.versionSesion), usuario = usuarioFinal.toResponse())
+    }
+
+    // ---------- OLVIDÉ MI CONTRASEÑA (RECUPERAR) ----------
+
+    /** PASO 1: Solicitar código de recuperación (sin revelar si el correo existe) */
+    fun solicitarCodigoRecuperar(correo: String, appScope: CoroutineScope) {
+        val correoLimpio = correo.trim().lowercase()
+        if (!REGEX_CORREO.matches(correoLimpio)) {
+            throw ValidacionException(listOf("El correo no tiene un formato válido"))
+        }
+
+        // Se procesa en segundo plano para no revelar la existencia ni retardos por envío
+        appScope.launch(Dispatchers.IO) {
+            try {
+                val usuario = repositorio.buscarPorCorreo(correoLimpio)
+                if (usuario != null && usuario.activo) {
+                    codigos.generarYEnviar(
+                        correo = correoLimpio,
+                        motivo = MotivoCodigo.RECUPERAR_CONTRASENA,
+                        enviador = enviador,
+                        usuarioId = null
+                    )
+                }
+            } catch (e: Exception) {
+                logger.warn("Error enviando código de recuperación en segundo plano: {}", e.message)
+            }
+        }
+    }
+
+    /** PASO 2: Verificar el código de recuperación */
+    suspend fun verificarCodigoRecuperar(correo: String, codigo: String): String {
+        val correoLimpio = correo.trim().lowercase()
+        if (!REGEX_CORREO.matches(correoLimpio)) {
+            throw ValidacionException(listOf("El correo no tiene un formato válido"))
+        }
+
+        codigos.verificar(
+            correo = correoLimpio,
+            motivo = MotivoCodigo.RECUPERAR_CONTRASENA,
+            codigo = codigo,
+            usuarioId = null
+        )
+
+        val usuario = repositorio.buscarPorCorreo(correoLimpio)
+            ?: throw ConflictoException("No hay un código pendiente para este correo. Pide uno nuevo.")
+
+        return jwtService.generarComprobanteRecuperar(usuario.id, usuario.versionSesion)
+    }
+
+    /** PASO 3: Guardar la nueva contraseña de recuperación */
+    suspend fun guardarNuevaContrasenaRecuperar(req: NuevaContrasenaRecuperarRequest) {
+        val proofInfo = jwtService.obtenerComprobanteRecuperar(req.comprobante)
+            ?: throw ConflictoException("El tiempo para cambiar tu contraseña terminó. Vuelve a empezar.")
+
+        val (usuarioId, versionSesion) = proofInfo
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw ConflictoException("El tiempo para cambiar tu contraseña terminó. Vuelve a empezar.")
+
+        if (usuario.versionSesion != versionSesion) {
+            throw ConflictoException("El tiempo para cambiar tu contraseña terminó. Vuelve a empezar.")
+        }
+
+        val nueva = req.contrasenaNueva.trim()
+        if (nueva.length < MIN_CONTRASENA) {
+            throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
+        }
+        if (nueva.toByteArray().size > MAX_CONTRASENA_BYTES) {
+            throw ValidacionException(listOf("La nueva contraseña es demasiado larga"))
+        }
+
+        val teniaContrasena = usuario.contrasenaHash != null
+
+        val nuevoHash = withContext(Dispatchers.Default) { PasswordHasher.hash(nueva) }
+        repositorio.actualizarContrasena(usuario.id, nuevoHash)
+
+        // Enviar correo de aviso
+        try {
+            val fechaHoraStr = formatearFechaHoraColima(OffsetDateTime.now())
+            val mensaje = if (teniaContrasena) {
+                PlantillasCorreo.contrasenaCambiada(usuario.correo, fechaHoraStr)
+            } else {
+                PlantillasCorreo.contrasenaCreada(usuario.correo, fechaHoraStr)
+            }
+            enviador.enviar(mensaje)
+        } catch (_: Exception) {
+            // Si falla el correo de aviso, la contraseña se queda guardada igual
+        }
     }
 
     /** PASO 2: Verificar contraseña actual con límite de intentos y bloqueo */
@@ -526,93 +608,27 @@ class UsuarioService(
             throw ProhibidoException("Un administrador no puede desactivar su cuenta")
         }
 
-        confirmarIdentidad(usuario, req)
+        if (usuario.contrasenaHash != null) {
+            val contrasenaInput = req.contrasena
+            if (contrasenaInput.isNullOrBlank() || !PasswordHasher.verificar(contrasenaInput, usuario.contrasenaHash)) {
+                throw ValidacionException(listOf("La contraseña actual es incorrecta"))
+            }
+        } else if (usuario.googleId != null) {
+            val googleToken = req.googleToken
+            if (googleToken.isNullOrBlank()) {
+                throw ValidacionException(listOf("El token de Google es requerido"))
+            }
+            val payload = firebaseTokenVerifier.verifyToken(googleToken)
+            if (payload == null || (payload.googleId != usuario.googleId && payload.email.lowercase() != usuario.correo.lowercase())) {
+                throw ValidacionException(listOf("La verificación de Google no corresponde a esta cuenta"))
+            }
+        }
 
         repositorio.desactivarCuenta(usuarioId)
 
         try {
             enviador.enviar(PlantillasCorreo.cuentaDesactivada(usuario.correo))
         } catch (_: Exception) {
-        }
-    }
-
-    /**
-     * Programa la eliminación de la cuenta (previa verificación de identidad).
-     * La cuenta queda desactivada desde ya y se borra en [DIAS_PARA_ELIMINAR] días,
-     * a menos que el usuario inicie sesión antes y elija conservarla.
-     */
-    suspend fun solicitarEliminacion(usuarioId: Int, req: DesactivarCuentaRequest): EliminacionProgramadaResponse {
-        val usuario = repositorio.buscarPorId(usuarioId)
-            ?: throw NoEncontradoException("Usuario no encontrado")
-
-        if (usuario.rol.lowercase().contains("admin")) {
-            throw ProhibidoException("Un administrador no puede eliminar su cuenta")
-        }
-
-        confirmarIdentidad(usuario, req)
-
-        val fecha = repositorio.programarEliminacion(usuarioId, DIAS_PARA_ELIMINAR)
-            ?: throw NoEncontradoException("Usuario no encontrado")
-        val fechaTexto = formatearFechaColima(fecha)
-
-        try {
-            enviador.enviar(PlantillasCorreo.eliminacionProgramada(usuario.correo, fechaTexto))
-        } catch (_: Exception) {
-            // Si el correo falla, la eliminación queda programada igual
-        }
-
-        return EliminacionProgramadaResponse(
-            // Con la hora de Colima, para que la fecha (día) sea la correcta aunque el servidor esté en UTC
-            fechaEliminacion = fecha.atZoneSameInstant(ZoneId.of("America/Mexico_City")).toOffsetDateTime().toString(),
-            fechaEliminacionTexto = fechaTexto,
-        )
-    }
-
-    /**
-     * Borra de verdad las cuentas cuya fecha de eliminación ya llegó y les manda el aviso final.
-     * La API lo corre al arrancar y cada 24 horas (Application.kt). Regresa cuántas borró.
-     */
-    suspend fun purgarCuentasVencidas(): Int {
-        var borradas = 0
-        for ((id, correo) in repositorio.cuentasPorEliminar()) {
-            try {
-                if (repositorio.eliminarDefinitivamente(id)) {
-                    borradas++
-                    try {
-                        enviador.enviar(PlantillasCorreo.cuentaEliminada(correo))
-                    } catch (_: Exception) {
-                        // La cuenta ya se borró; si el aviso falla no pasa nada más
-                    }
-                }
-            } catch (e: Exception) {
-                log.error("No se pudo eliminar la cuenta {}: {}", id, e.message)
-            }
-        }
-        return borradas
-    }
-
-    /**
-     * Confirma que quien pide desactivar o eliminar es el dueño de la cuenta:
-     * con su contraseña o, si la cuenta es de Google y no tiene contraseña, con un token de Google.
-     */
-    private suspend fun confirmarIdentidad(usuario: Usuario, req: DesactivarCuentaRequest) {
-        val hash = usuario.contrasenaHash
-        if (hash != null) {
-            val contrasenaInput = req.contrasena
-            val correcta = !contrasenaInput.isNullOrBlank() &&
-                withContext(Dispatchers.Default) { PasswordHasher.verificar(contrasenaInput, hash) }
-            if (!correcta) {
-                throw ValidacionException(listOf("La contraseña actual es incorrecta"))
-            }
-        } else if (usuario.googleId != null) {
-            val googleToken = req.googleToken
-            if (googleToken.isNullOrBlank()) {
-                throw ValidacionException(listOf("Confirma con tu cuenta de Google"))
-            }
-            val payload = firebaseTokenVerifier.verifyToken(googleToken)
-            if (payload == null || (payload.googleId != usuario.googleId && payload.email.lowercase() != usuario.correo.lowercase())) {
-                throw ValidacionException(listOf("La cuenta de Google que elegiste no es la de esta cuenta"))
-            }
         }
     }
 
@@ -646,7 +662,7 @@ class UsuarioService(
         if (bytes.size > MAX_FOTO_BYTES) {
             throw ValidacionException(listOf("La foto no puede pasar de 2 MB"))
         }
-        // Se revisan los primeros bytes: no basta con confiar en la extensión o el tipo declarado
+        // Se revisan los primeros bytes: no basta con confiar en la extensión o el tipo declared
         val tipo = detectarTipoImagen(bytes)
             ?: throw ValidacionException(listOf("Solo se aceptan imágenes JPEG, PNG o WebP"))
 
@@ -670,11 +686,6 @@ class UsuarioService(
         val primeraLetra = usuario.take(1)
         return "$primeraLetra•••@$dominio"
     }
-
-    /** "5 de diciembre de 2026", con la hora de Colima. */
-    private fun formatearFechaColima(fecha: OffsetDateTime): String =
-        fecha.atZoneSameInstant(ZoneId.of("America/Mexico_City"))
-            .format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("es", "MX")))
 
     private fun formatearFechaHoraColima(ahora: OffsetDateTime): String {
         val zoneId = ZoneId.of("America/Mexico_City")
@@ -791,8 +802,6 @@ class UsuarioService(
     private fun soloDigitos(s: String) = s.filter { it.isDigit() }
 
     private companion object {
-        /** Días que pasan entre pedir eliminar la cuenta y que se borre de verdad. */
-        const val DIAS_PARA_ELIMINAR = 30
         const val MIN_CONTRASENA = 6
         const val MAX_CONTRASENA_BYTES = 72
         const val MAX_TEXTO = 80

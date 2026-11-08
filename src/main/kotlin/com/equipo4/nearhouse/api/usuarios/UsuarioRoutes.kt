@@ -22,8 +22,6 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
-import io.ktor.http.CacheControl
-import io.ktor.server.response.cacheControl
 
 /**
  * Rutas de usuarios. Solo traducen HTTP <-> servicio:
@@ -79,20 +77,32 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             val respuesta = service.registrarGoogleFinal(req)
             call.respond(HttpStatusCode.Created, respuesta)
         }
+
+        // 8. POST /api/v1/auth/recuperar/solicitar-codigo -> Solicita código para recuperar contraseña
+        post("/recuperar/solicitar-codigo") {
+            val req = call.recibir<SolicitarCodigoRecuperarRequest>()
+            service.solicitarCodigoRecuperar(req.correo, call.application)
+            call.respond(HttpStatusCode.OK, SolicitarCodigoRecuperarResponse())
+        }
+
+        // 9. POST /api/v1/auth/recuperar/verificar -> Verifica código y regresa comprobante
+        post("/recuperar/verificar") {
+            val req = call.recibir<VerificarCodigoRecuperarRequest>()
+            val comprobante = service.verificarCodigoRecuperar(req.correo, req.codigo)
+            call.respond(HttpStatusCode.OK, VerificarCodigoRecuperarResponse(comprobante))
+        }
+
+        // 10. POST /api/v1/auth/recuperar/nueva-contrasena -> Guarda la nueva contraseña sin token de sesión
+        post("/recuperar/nueva-contrasena") {
+            val req = call.recibir<NuevaContrasenaRecuperarRequest>()
+            service.guardarNuevaContrasenaRecuperar(req)
+            call.respond(HttpStatusCode.OK)
+        }
     }
 
     // GET /api/v1/planes -> público, planes activos del más barato al más caro
     get("/planes") {
         call.respond(service.listarPlanes())
-    }
-
-    // GET /api/v1/usuarios/{id}/foto -> foto pública de un usuario (la ven los compradores en los anuncios)
-    get("/usuarios/{id}/foto") {
-        val id = call.parameters["id"]?.toIntOrNull()
-            ?: throw ValidacionException(listOf("El id no es válido"))
-        val foto = service.obtenerFoto(id)
-        call.response.cacheControl(CacheControl.MaxAge(maxAgeSeconds = 86400, visibility = CacheControl.Visibility.Public))
-        call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
     }
 
     // Rutas que exigen token: Authorization: Bearer <token>
@@ -114,12 +124,6 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             val req = call.recibir<DesactivarCuentaRequest>()
             service.desactivarCuenta(call.usuarioId(), req)
             call.respond(HttpStatusCode.NoContent)
-        }
-
-        // POST /api/v1/usuarios/me/eliminar -> programa la eliminación de la cuenta (se borra en 30 días)
-        post("/usuarios/me/eliminar") {
-            val req = call.recibir<DesactivarCuentaRequest>()
-            call.respond(HttpStatusCode.OK, service.solicitarEliminacion(call.usuarioId(), req))
         }
 
         // POST /api/v1/usuarios/me/contrasena/codigo -> Solicita código para cambiar/crear contraseña
