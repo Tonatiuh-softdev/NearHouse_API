@@ -22,7 +22,7 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
-import com.equipo4.nearhome.api.common.NoEncontradoException
+import com.equipo4.nearhouse.api.common.NoEncontradoException
 import io.ktor.http.HttpHeaders
 import io.ktor.server.response.header
 
