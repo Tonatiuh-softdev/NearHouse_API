@@ -1,17 +1,33 @@
 package com.equipo4.nearhouse.api.reportes
 
+import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
 import com.equipo4.nearhouse.api.common.DemasiadasSolicitudesException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
-import kotlinx.serialization.json.Json
-import com.equipo4.nearhouse.api.auth.Roles
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
+import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import com.equipo4.nearhouse.api.publicaciones.FotoGuardada
+import kotlinx.serialization.json.Json
+
+/**
+ * Lo necesario para avisar al resolver un reporte.
+ * [reportanteId] puede ser nulo: si la cuenta de quien reportó se eliminó, el reporte se queda sin autor.
+ */
+data class AvisoReporte(
+    val reportanteId: Int?,
+    val duenoId: Int,
+    val publicacionId: Int,
+    val titulo: String,
+)
 
 /** Reglas de negocio de reportes. Las validaciones siguen el orden de la especificación. */
-class ReporteService(private val repositorio: ReporteRepository) {
+class ReporteService(
+    private val repositorio: ReporteRepository,
+    private val notificaciones: NotificacionService,
+) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -66,7 +82,15 @@ class ReporteService(private val repositorio: ReporteRepository) {
             throw DemasiadasSolicitudesException("Llegaste al límite de reportes por hoy. Intenta mañana.")
         }
 
-        return repositorio.crear(usuarioId, publicacionId, categoria, motivo, descripcion, imagenes)
+        val creado = repositorio.crear(usuarioId, publicacionId, categoria, motivo, descripcion, imagenes)
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.REPORTE_ENVIADO,
+            mapOf("titulo" to publicacion.titulo),
+            idPublicacion = publicacionId,
+            idReporte = creado.id,
+        )
+        return creado
     }
 
     private fun leerDatos(datosJson: String?): CrearReporteRequest {
@@ -78,7 +102,7 @@ class ReporteService(private val repositorio: ReporteRepository) {
         }
     }
 
-        // ---------- Administrador ----------
+    // ---------- Administrador ----------
 
     suspend fun listarAdmin(rol: String, estado: String?, pagina: Int?): List<ReporteListaResponse> {
         exigirAdmin(rol)
@@ -113,7 +137,33 @@ class ReporteService(private val repositorio: ReporteRepository) {
         if (req.retirarPublicacion && req.estado != "PROCEDENTE") {
             throw ValidacionException(listOf("Solo se puede retirar la publicación si el reporte es PROCEDENTE"))
         }
+
+        // Se leen los datos del aviso antes de resolver
+        val aviso = repositorio.datosParaAviso(id)
+
         repositorio.resolver(id, revisorId, req.estado, nota, req.retirarPublicacion)
+
+        if (aviso != null) {
+            // La nota del administrador es interna: no se manda en ningún aviso
+            val datos = mapOf("titulo" to aviso.titulo)
+            val reportante = aviso.reportanteId
+            if (req.estado == "PROCEDENTE") {
+                if (reportante != null) {
+                    notificaciones.notificar(
+                        reportante, TipoNotificacion.REPORTE_ATENDIDO, datos, aviso.publicacionId, id
+                    )
+                }
+                if (req.retirarPublicacion) {
+                    notificaciones.notificar(
+                        aviso.duenoId, TipoNotificacion.PUBLICACION_RETIRADA, datos, aviso.publicacionId, id
+                    )
+                }
+            } else if (reportante != null) {
+                notificaciones.notificar(
+                    reportante, TipoNotificacion.REPORTE_DESCARTADO, datos, aviso.publicacionId, id
+                )
+            }
+        }
     }
 
     private fun exigirAdmin(rol: String) {

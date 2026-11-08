@@ -1,28 +1,35 @@
 package com.equipo4.nearhouse.api.notificaciones
 
-import com.equipo4.nearhouse.api.common.ValidacionException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
+import com.equipo4.nearhouse.api.common.ValidacionException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
 
 /**
- * Guarda los avisos del usuario. Esta etapa solo los guarda y los lista; el envío a la barra
- * del celular (Firebase) se agrega en la siguiente etapa.
+ * Guarda los avisos del usuario y los manda a la barra del celular (Firebase).
  *
- * Regla del documento: si guardar un aviso falla, la acción principal (publicar, reportar, pagar)
+ * Regla del documento: si guardar o mandar un aviso falla, la acción principal (publicar, reportar, pagar)
  * no se cae. Por eso [notificar] nunca lanza excepción hacia afuera.
  */
-class NotificacionService(private val repositorio: NotificacionRepository) {
+class NotificacionService(
+    private val repositorio: NotificacionRepository,
+    private val dispositivos: DispositivoRepository,
+    private val push: EnviadorPush,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+) {
 
     private val log = LoggerFactory.getLogger(NotificacionService::class.java)
 
     /**
-     * Guarda un aviso. [datos] son los valores para el texto (título, motivo, plan, fecha...).
-     * Nunca lanza excepción: si falla, solo se registra el error (sin datos personales).
+     * Guarda un aviso y lo manda a los celulares del usuario. [datos] son los valores para el texto
+     * (título, motivo, plan, fecha...). Nunca lanza excepción: si falla, solo se registra el error
+     * (sin datos personales).
      */
     suspend fun notificar(
         usuarioId: Int,
@@ -45,8 +52,38 @@ class NotificacionService(private val repositorio: NotificacionRepository) {
                 )
             )
         } catch (e: Exception) {
-            // Sin título, texto ni datos del usuario: solo el tipo y el id interno
             log.error("No se pudo guardar el aviso {} del usuario {}: {}", tipo, usuarioId, e.message)
+            return
+        }
+
+        // El envío al celular va en segundo plano: no retrasa ni tumba la acción principal
+        scope.launch {
+            try {
+                enviarPush(usuarioId, tipo, datos, idPublicacion, idReporte)
+            } catch (e: Exception) {
+                log.warn("No se pudo enviar el push {} al usuario {}: {}", tipo, usuarioId, e.message)
+            }
+        }
+    }
+
+    private suspend fun enviarPush(
+        usuarioId: Int,
+        tipo: TipoNotificacion,
+        datos: Map<String, String>,
+        idPublicacion: Int?,
+        idReporte: Int?
+    ) {
+        for (d in dispositivos.deUsuario(usuarioId)) {
+            val texto = TextosPush.armar(tipo, datos, d.idioma)
+            // Para que la app abra la pantalla correcta al tocar el aviso
+            val payload = buildMap {
+                put("tipo", tipo.name)
+                idPublicacion?.let { put("idPublicacion", it.toString()) }
+                idReporte?.let { put("idReporte", it.toString()) }
+            }
+            if (push.enviar(d.token, texto.titulo, texto.cuerpo, payload) == ResultadoPush.TOKEN_INVALIDO) {
+                dispositivos.borrarToken(d.token)
+            }
         }
     }
 

@@ -9,6 +9,11 @@ import com.equipo4.nearhouse.api.colonias.ColoniaRepository
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
+import com.equipo4.nearhouse.api.notificaciones.DispositivoRepository
+import com.equipo4.nearhouse.api.notificaciones.DispositivoService
+import com.equipo4.nearhouse.api.notificaciones.EnviadorPush
+import com.equipo4.nearhouse.api.notificaciones.EnviadorPushConsola
+import com.equipo4.nearhouse.api.notificaciones.EnviadorPushFirebase
 import com.equipo4.nearhouse.api.notificaciones.NotificacionRepository
 import com.equipo4.nearhouse.api.notificaciones.NotificacionService
 import com.equipo4.nearhouse.api.plugins.configureMonitoring
@@ -72,6 +77,23 @@ fun Application.module(config: AppConfig) {
     // UNO solo para toda la API: aquí viven los códigos pendientes
     val codigosCorreo = CodigosCorreo(config.jwtSecret)
 
+    // Push: Firebase real si hay FIREBASE_CREDENCIALES; si no, solo consola
+    val enviadorPush: EnviadorPush =
+        if (config.firebaseCredenciales.isNotBlank()) {
+            EnviadorPushFirebase(config.firebaseCredenciales, config.firebaseProjectId)
+        } else {
+            EnviadorPushConsola()
+        }
+
+    // Notificaciones y dispositivos: se crean antes de los servicios que las usan
+    val dispositivoRepository = DispositivoRepository(dataSource)
+    val dispositivoService = DispositivoService(dispositivoRepository)
+    val notificacionService = NotificacionService(
+        NotificacionRepository(dataSource),
+        dispositivoRepository,
+        enviadorPush,
+    )
+
     val usuarioRepository = UsuarioRepository(dataSource)
 
     val usuarioService = UsuarioService(
@@ -81,19 +103,14 @@ fun Application.module(config: AppConfig) {
         googleProofService = googleProofService,
         codigos = codigosCorreo,
         enviador = enviadorCorreo,
+        notificaciones = notificacionService,
     )
 
-    // Notificaciones: se crean aquí, antes de los ciclos que las usan
-    val notificacionService = NotificacionService(NotificacionRepository(dataSource))
-
-    // Limpieza diaria: cuentas por eliminar y notificaciones antiguas.
+    // Limpieza diaria: notificaciones antiguas.
     // Se revisa al arrancar y luego cada 24 horas. Si la API se apaga, se detiene sola.
     launch {
         while (isActive) {
             try {
-                val cuentasBorradas = usuarioService.purgarCuentasVencidas()
-                if (cuentasBorradas > 0) log.info("Cuentas eliminadas definitivamente: {}", cuentasBorradas)
-
                 val notifBorradas = notificacionService.limpiar()
                 if (notifBorradas > 0) log.info("Notificaciones antiguas borradas: {}", notifBorradas)
             } catch (e: Exception) {
@@ -107,10 +124,10 @@ fun Application.module(config: AppConfig) {
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
 
     // Crear anuncios (con fotos)
-    val publicacionService = PublicacionService(PublicacionRepository(dataSource))
+    val publicacionService = PublicacionService(PublicacionRepository(dataSource), notificacionService)
 
     // Reportes de publicaciones
-    val reporteService = ReporteService(ReporteRepository(dataSource))
+    val reporteService = ReporteService(ReporteRepository(dataSource), notificacionService)
 
     // Panel de administración: cuentas de usuarios
     val adminUsuarioService = AdminUsuarioService(AdminUsuarioRepository(dataSource))
@@ -128,5 +145,6 @@ fun Application.module(config: AppConfig) {
         reporteService,
         adminUsuarioService,
         notificacionService,
+        dispositivoService,
     )
 }

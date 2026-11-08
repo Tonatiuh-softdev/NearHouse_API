@@ -13,6 +13,8 @@ import com.equipo4.nearhouse.api.common.NoAutorizadoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
+import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
 import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
 import com.equipo4.nearhouse.api.verificacion.MotivoCodigo
@@ -47,6 +49,7 @@ class UsuarioService(
     private val googleProofService: GoogleProofService,
     private val codigos: CodigosCorreo,
     private val enviador: EnviadorCorreo,
+    private val notificaciones: NotificacionService,
 ) {
 
     private val logger = LoggerFactory.getLogger(UsuarioService::class.java)
@@ -179,6 +182,8 @@ class UsuarioService(
         val usuario = repositorio.buscarPorId(id)
             ?: error("El usuario $id se creó pero no se pudo leer")
 
+        notificaciones.notificar(usuario.id, TipoNotificacion.BIENVENIDA, mapOf("nombre" to usuario.nombre))
+
         return AuthResponse(
             token = jwtService.generarToken(usuario.id, usuario.rol, usuario.versionSesion),
             usuario = usuario.toResponse()
@@ -258,6 +263,9 @@ class UsuarioService(
 
         val usuario = repositorio.buscarPorId(id)
             ?: error("El usuario $id se creó pero no se pudo leer")
+
+        notificaciones.notificar(usuario.id, TipoNotificacion.BIENVENIDA, mapOf("nombre" to usuario.nombre))
+
         return AuthResponse(token = jwtService.generarToken(usuario.id, usuario.rol, usuario.versionSesion), usuario = usuario.toResponse())
     }
 
@@ -749,6 +757,16 @@ class UsuarioService(
             vencimiento = ahora.plusDays(dias.toLong()),
             usarPrueba = usarPrueba,
             pasarAVendedor = usuario.rol == "Comprador"
+        )
+
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.PLAN_CONTRATADO,
+            mapOf(
+                "plan" to plan.nombre,
+                "vencimiento" to ahora.plusDays(dias.toLong()).toLocalDate().toString(),
+                "prueba" to usarPrueba.toString()
+            )
         )
 
         // El rol va dentro del token, así que se genera uno nuevo

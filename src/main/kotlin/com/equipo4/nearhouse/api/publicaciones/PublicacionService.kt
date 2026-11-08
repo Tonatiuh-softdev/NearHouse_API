@@ -6,13 +6,18 @@ import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
+import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import kotlinx.serialization.json.Json
 
 /**
  * Reglas de negocio de publicaciones: quién puede publicar y que los datos y las fotos sean válidos.
  * Las reglas coinciden con las restricciones de la base de datos (migración 02).
  */
-class PublicacionService(private val repositorio: PublicacionRepository) {
+class PublicacionService(
+    private val repositorio: PublicacionRepository,
+    private val notificaciones: NotificacionService,
+) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -32,7 +37,14 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         val fotosValidas = validarFotos(fotos, errores)
         if (errores.isNotEmpty()) throw ValidacionException(errores)
 
-        return repositorio.crear(usuarioId, publicacion, fotosValidas)
+        val creada = repositorio.crear(usuarioId, publicacion, fotosValidas)
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.PUBLICACION_EN_REVISION,
+            mapOf("titulo" to publicacion.titulo),
+            idPublicacion = creada.id,
+        )
+        return creada
     }
 
     // ---------- Consultas ----------
@@ -104,7 +116,14 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         if (errores.isNotEmpty()) throw ValidacionException(errores)
 
         repositorio.editar(id, usuarioId, publicacion, eliminar, req.reemplazaPortada, nuevas)
-        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val editada = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.PUBLICACION_EN_REVISION,
+            mapOf("titulo" to editada.titulo),
+            idPublicacion = id,
+        )
+        return editada
     }
 
     // ---------- Administrador ----------
@@ -121,7 +140,14 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
     suspend fun aprobar(rol: String, revisorId: Int, id: Int): PublicacionResponse {
         exigirAdmin(rol)
         revisar(id, revisorId, ESTADO_PUBLICADA, null)
-        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        notificaciones.notificar(
+            anuncio.vendedor.id,
+            TipoNotificacion.PUBLICACION_APROBADA,
+            mapOf("titulo" to anuncio.titulo),
+            idPublicacion = id,
+        )
+        return anuncio
     }
 
     suspend fun rechazar(rol: String, revisorId: Int, id: Int, motivo: String): PublicacionResponse {
@@ -131,7 +157,14 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
             throw ValidacionException(listOf("El motivo debe tener entre $MIN_MOTIVO y $MAX_MOTIVO caracteres"))
         }
         revisar(id, revisorId, ESTADO_RECHAZADA, limpio)
-        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        notificaciones.notificar(
+            anuncio.vendedor.id,
+            TipoNotificacion.PUBLICACION_RECHAZADA,
+            mapOf("titulo" to anuncio.titulo, "motivo" to limpio),
+            idPublicacion = id,
+        )
+        return anuncio
     }
 
     private suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?) {
