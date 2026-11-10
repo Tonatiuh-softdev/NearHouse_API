@@ -152,7 +152,8 @@ data class PublicacionResponse(
     val fotos: List<Int>,
     val vendedor: VendedorResponse,
     val fechaRegistro: Long,
-    val revision: RevisionResponse?
+    val revision: RevisionResponse?,
+    val guardada: Boolean = false
 )
 
 @Serializable

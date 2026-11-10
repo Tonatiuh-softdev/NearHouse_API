@@ -9,6 +9,8 @@ import com.equipo4.nearhouse.api.colonias.ColoniaRepository
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
+import com.equipo4.nearhouse.api.guardados.GuardadoRepository
+import com.equipo4.nearhouse.api.guardados.GuardadoService
 import com.equipo4.nearhouse.api.notificaciones.DispositivoRepository
 import com.equipo4.nearhouse.api.notificaciones.DispositivoService
 import com.equipo4.nearhouse.api.notificaciones.EnviadorPush
@@ -124,13 +126,18 @@ fun Application.module(config: AppConfig) {
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
 
     // Crear anuncios (con fotos)
-    val publicacionService = PublicacionService(PublicacionRepository(dataSource), notificacionService)
+    val publicacionRepository = PublicacionRepository(dataSource)
+    val publicacionService = PublicacionService(publicacionRepository, notificacionService)
 
     // Reportes de publicaciones
     val reporteService = ReporteService(ReporteRepository(dataSource), notificacionService)
 
     // Panel de administración: cuentas de usuarios
     val adminUsuarioService = AdminUsuarioService(AdminUsuarioRepository(dataSource))
+
+    // Guardados de publicaciones
+    val guardadoRepository = GuardadoRepository(dataSource, publicacionRepository)
+    val guardadoService = GuardadoService(guardadoRepository)
 
     // Plugins
     configureSerialization()
@@ -146,5 +153,6 @@ fun Application.module(config: AppConfig) {
         adminUsuarioService,
         notificacionService,
         dispositivoService,
+        guardadoService,
     )
 }

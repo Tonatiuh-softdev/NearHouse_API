@@ -25,6 +25,10 @@ fun ApplicationCall.usuarioId(): Int =
     principal<JWTPrincipal>()?.payload?.getClaim(JwtService.CLAIM_ID)?.asInt()
         ?: throw NoAutorizadoException("Token inválido")
 
+/** Id del usuario si viene autenticado, o null si la petición es pública o sin token. */
+fun ApplicationCall.usuarioIdOrNull(): Int? =
+    principal<JWTPrincipal>()?.payload?.getClaim(JwtService.CLAIM_ID)?.asInt()
+
 /** Rol del usuario que viene dentro del token JWT de la petición. */
 fun ApplicationCall.usuarioRol(): String =
     principal<JWTPrincipal>()?.payload?.getClaim(JwtService.CLAIM_ROL)?.asString()

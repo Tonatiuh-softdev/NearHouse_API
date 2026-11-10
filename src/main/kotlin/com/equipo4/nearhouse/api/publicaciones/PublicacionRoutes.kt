@@ -4,6 +4,7 @@ import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.common.ValidacionException
 import com.equipo4.nearhouse.api.common.recibir
 import com.equipo4.nearhouse.api.common.usuarioId
+import com.equipo4.nearhouse.api.common.usuarioIdOrNull
 import com.equipo4.nearhouse.api.common.usuarioRol
 import io.ktor.http.CacheControl
 import io.ktor.http.ContentType
@@ -26,7 +27,6 @@ import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 
-/** Se lee una foto de más que el máximo: así se detecta que mandaron de sobra sin guardar archivos enormes en memoria. */
 private const val MAX_FOTOS_LEIDAS = MAX_FOTOS_ANUNCIO + 1
 
 /**
@@ -41,20 +41,22 @@ fun Route.publicacionRoutes(service: PublicacionService) {
         call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
     }
 
+    authenticate(JwtService.AUTH_NAME, optional = true) {
+        // GET /api/v1/publicaciones -> anuncios PUBLICADA y activos (el home)
+        get("/publicaciones") {
+            val usuarioLogueadoId = call.usuarioIdOrNull()
+            call.respond(service.listarPublicas(usuarioLogueadoId))
+        }
+    }
+
     authenticate(JwtService.AUTH_NAME) {
 
         // POST /api/v1/publicaciones -> crea un anuncio (queda EN_REVISION)
-        // multipart/form-data: campo "datos" (JSON) + de 1 a MAX_FOTOS_ANUNCIO archivos en el campo "fotos"
         post("/publicaciones") {
             val rol = call.usuarioRol()
             val usuarioId = call.usuarioId()
             val (datos, fotos) = call.recibirPublicacion()
             call.respond(HttpStatusCode.Created, service.crear(usuarioId, rol, datos, fotos))
-        }
-
-        // GET /api/v1/publicaciones -> anuncios PUBLICADA y activos (el home)
-        get("/publicaciones") {
-            call.respond(service.listarPublicas())
         }
 
         // GET /api/v1/publicaciones/mias -> los anuncios del usuario con sesión, en cualquier estado
@@ -64,7 +66,7 @@ fun Route.publicacionRoutes(service: PublicacionService) {
 
         // GET /api/v1/publicaciones/{id} -> un anuncio con los datos de contacto del vendedor
         get("/publicaciones/{id}") {
-            call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol()))
+            call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol(), call.usuarioIdOrNull()))
         }
 
         // PATCH /api/v1/publicaciones/{id}/activa  {"activa": false} -> pausa u oculta (true = reactiva)
@@ -94,7 +96,7 @@ fun Route.publicacionRoutes(service: PublicacionService) {
 
             // GET /api/v1/admin/publicaciones/{id}
             get("/{id}") {
-                call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol()))
+                call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol(), call.usuarioIdOrNull()))
             }
 
             // POST /api/v1/admin/publicaciones/{id}/aprobar -> EN_REVISION pasa a PUBLICADA
@@ -114,7 +116,6 @@ fun Route.publicacionRoutes(service: PublicacionService) {
 private fun ApplicationCall.idDeRuta(): Int =
     parameters["id"]?.toIntOrNull() ?: throw ValidacionException(listOf("El id no es válido"))
 
-/** Lee el JSON del campo "datos" y los archivos del campo "fotos", en el orden en que llegaron. */
 private suspend fun ApplicationCall.recibirPublicacion(): Pair<String?, List<ByteArray>> {
     var datos: String? = null
     val fotos = mutableListOf<ByteArray>()
