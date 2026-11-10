@@ -63,7 +63,7 @@ data class ResolverReporteRequest(
 )
 
 /** Publicación visible para reportar: solo lo necesario para validar el dueño. */
-data class PublicacionVisible(val vendedorId: Int)
+data class PublicacionVisible(val vendedorId: Int, val titulo: String)
 
 class FotoEvidencia(val bytes: ByteArray, val tipo: String)
 

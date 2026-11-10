@@ -1,5 +1,7 @@
 package com.equipo4.nearhouse.api
 
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioRepository
+import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
 import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
@@ -7,6 +9,13 @@ import com.equipo4.nearhouse.api.colonias.ColoniaRepository
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.config.AppConfig
 import com.equipo4.nearhouse.api.config.DatabaseFactory
+import com.equipo4.nearhouse.api.notificaciones.DispositivoRepository
+import com.equipo4.nearhouse.api.notificaciones.DispositivoService
+import com.equipo4.nearhouse.api.notificaciones.EnviadorPush
+import com.equipo4.nearhouse.api.notificaciones.EnviadorPushConsola
+import com.equipo4.nearhouse.api.notificaciones.EnviadorPushFirebase
+import com.equipo4.nearhouse.api.notificaciones.NotificacionRepository
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
 import com.equipo4.nearhouse.api.plugins.configureMonitoring
 import com.equipo4.nearhouse.api.plugins.configureRouting
 import com.equipo4.nearhouse.api.plugins.configureSecurity
@@ -30,8 +39,6 @@ import io.ktor.server.netty.Netty
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioRepository
-import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 
 /**
  * Punto de entrada de la API. Lee la configuración de las variables de entorno
@@ -53,7 +60,7 @@ fun Application.module(config: AppConfig) {
     val dataSource = DatabaseFactory.createDataSource(config)
     monitor.subscribe(ApplicationStopped) { dataSource.close() }
 
-    // Servicios
+    // Servicios base
     val jwtService = JwtService(config)
 
     // Verificación de Google y comprobantes. Todo sale de config, no de System.getenv
@@ -70,6 +77,23 @@ fun Application.module(config: AppConfig) {
     // UNO solo para toda la API: aquí viven los códigos pendientes
     val codigosCorreo = CodigosCorreo(config.jwtSecret)
 
+    // Push: Firebase real si hay FIREBASE_CREDENCIALES; si no, solo consola
+    val enviadorPush: EnviadorPush =
+        if (config.firebaseCredenciales.isNotBlank()) {
+            EnviadorPushFirebase(config.firebaseCredenciales, config.firebaseProjectId)
+        } else {
+            EnviadorPushConsola()
+        }
+
+    // Notificaciones y dispositivos: se crean antes de los servicios que las usan
+    val dispositivoRepository = DispositivoRepository(dataSource)
+    val dispositivoService = DispositivoService(dispositivoRepository)
+    val notificacionService = NotificacionService(
+        NotificacionRepository(dataSource),
+        dispositivoRepository,
+        enviadorPush,
+    )
+
     val usuarioRepository = UsuarioRepository(dataSource)
 
     val usuarioService = UsuarioService(
@@ -79,17 +103,18 @@ fun Application.module(config: AppConfig) {
         googleProofService = googleProofService,
         codigos = codigosCorreo,
         enviador = enviadorCorreo,
+        notificaciones = notificacionService,
     )
 
-    // Cuentas que pidieron eliminarse: se borran de verdad cuando llega su fecha.
+    // Limpieza diaria: notificaciones antiguas.
     // Se revisa al arrancar y luego cada 24 horas. Si la API se apaga, se detiene sola.
     launch {
         while (isActive) {
             try {
-                val borradas = usuarioService.purgarCuentasVencidas()
-                if (borradas > 0) log.info("Cuentas eliminadas definitivamente: {}", borradas)
+                val notifBorradas = notificacionService.limpiar()
+                if (notifBorradas > 0) log.info("Notificaciones antiguas borradas: {}", notifBorradas)
             } catch (e: Exception) {
-                log.error("Falló la limpieza de cuentas por eliminar: {}", e.message)
+                log.error("Falló la limpieza diaria: {}", e.message)
             }
             delay(24 * 60 * 60 * 1000L)
         }
@@ -99,10 +124,10 @@ fun Application.module(config: AppConfig) {
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
 
     // Crear anuncios (con fotos)
-    val publicacionService = PublicacionService(PublicacionRepository(dataSource))
+    val publicacionService = PublicacionService(PublicacionRepository(dataSource), notificacionService)
 
     // Reportes de publicaciones
-    val reporteService = ReporteService(ReporteRepository(dataSource))
+    val reporteService = ReporteService(ReporteRepository(dataSource), notificacionService)
 
     // Panel de administración: cuentas de usuarios
     val adminUsuarioService = AdminUsuarioService(AdminUsuarioRepository(dataSource))
@@ -112,5 +137,14 @@ fun Application.module(config: AppConfig) {
     configureMonitoring()
     configureStatusPages()
     configureSecurity(jwtService, usuarioRepository)
-    configureRouting(dataSource, usuarioService, coloniaService, publicacionService, reporteService, adminUsuarioService)
+    configureRouting(
+        dataSource,
+        usuarioService,
+        coloniaService,
+        publicacionService,
+        reporteService,
+        adminUsuarioService,
+        notificacionService,
+        dispositivoService,
+    )
 }
