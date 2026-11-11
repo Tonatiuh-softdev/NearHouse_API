@@ -105,7 +105,6 @@ fun Application.module(config: AppConfig) {
         googleProofService = googleProofService,
         codigos = codigosCorreo,
         enviador = enviadorCorreo,
-        notificaciones = notificacionService,
     )
 
     // Limpieza diaria: notificaciones antiguas.

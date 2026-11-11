@@ -82,20 +82,6 @@ object PlantillasCorreo {
         texto = "Desactivaste tu cuenta de NearHouse. Tus anuncios ya no se ven. Para volver, solo inicia sesión en la app.",
     )
 
-    /** Correo de aviso cuando el usuario pide eliminar su cuenta: se borra en 30 días si no inicia sesión. */
-    fun eliminacionProgramada(para: String, fecha: String) = MensajeCorreo(
-        para = para,
-        asunto = "Tu cuenta de NearHouse se eliminará el $fecha",
-        html = diseno(
-            "Tu cuenta se eliminará",
-            "<p>Recibimos tu solicitud para eliminar tu cuenta de NearHouse. Tus anuncios ya no se ven.</p>" +
-                "<p>Tu cuenta y todos tus datos se borrarán el <b>$fecha</b>. Después de esa fecha ya no se podrán recuperar.</p>" +
-                "<p>Si cambias de opinión, inicia sesión en la app antes de esa fecha y elige conservar tu cuenta.</p>",
-        ),
-        texto = "Recibimos tu solicitud para eliminar tu cuenta de NearHouse. Tu cuenta y todos tus datos se borrarán el $fecha. " +
-            "Si cambias de opinión, inicia sesión en la app antes de esa fecha y elige conservar tu cuenta.",
-    )
-
     /** Correo de aviso cuando se cambia la contraseña. */
     fun contrasenaCambiada(para: String, fechaHora: String) = MensajeCorreo(
         para = para,
@@ -130,6 +116,18 @@ object PlantillasCorreo {
                 "<p>Si no fuiste tú, escríbenos a soporte@nearhouse.com lo antes posible.</p>",
         ),
         texto = "El $fechaHora el correo de tu cuenta de NearHouse se cambió a $correoNuevoOculto. Si no fuiste tú, escríbenos a soporte@nearhouse.com lo antes posible.",
+    )
+
+    /** Correo de aviso cuando se cambia el teléfono de la cuenta. */
+    fun telefonoCambiado(para: String, telefonoNuevoOculto: String) = MensajeCorreo(
+        para = para,
+        asunto = "El teléfono de tu cuenta NearHouse se cambió",
+        html = diseno(
+            "El teléfono de tu cuenta se cambió",
+            "<p>El teléfono de tu cuenta NearHouse se cambió a $telefonoNuevoOculto.</p>" +
+                "<p>Si no fuiste tú, contáctanos lo antes posible.</p>",
+        ),
+        texto = "El teléfono de tu cuenta NearHouse se cambió a $telefonoNuevoOculto. Si no fuiste tú, contáctanos.",
     )
 
     /** Ejemplo de correo sin código: aviso de que la cuenta ya se eliminó. */
