@@ -45,6 +45,48 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
+    /**
+     * Rol, plan vigente y si la cuenta puede publicar, leídos de la base (no del token).
+     * La regla de cuenta activa es la misma que usa vw_publicacion_visible y el login.
+     */
+    suspend fun estadoPublicador(usuarioId: Int): EstadoPublicador? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(
+                """
+                SELECT r.t_nombre_rol,
+                    COALESCE(u.fh_vencimiento_suscripcion_usuario > CURRENT_TIMESTAMP, FALSE) AS plan_vigente,
+                    (u.fh_suspension_hasta_usuario IS NULL
+                        OR u.fh_suspension_hasta_usuario <= CURRENT_TIMESTAMP) AS cuenta_activa,
+                    (u.fh_desactivacion_usuario IS NULL) AS no_desactivada
+                FROM usuario u
+                JOIN rol r ON r.pke_id_rol = u.fke_id_rol
+                WHERE u.pke_id_usuario = ?
+                """
+            ).use { ps ->
+                ps.setInt(1, usuarioId)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) {
+                        EstadoPublicador(
+                            rol = rs.getString(1),
+                            planVigente = rs.getBoolean(2),
+                            cuentaActiva = rs.getBoolean(3) && rs.getBoolean(4)
+                        )
+                    } else null
+                }
+            }
+        }
+    }
+
+    /** Borra cualquier anuncio (solo para el administrador). */
+    suspend fun eliminarCualquiera(id: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement("DELETE FROM publicacion WHERE pke_id_publicacion = ?").use { ps ->
+                ps.setInt(1, id)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
     // ---------- Consultas (home y administrador) ----------
 
     suspend fun listar(
@@ -571,3 +613,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
         """
     }
 }
+
+data class EstadoPublicador(val rol: String, val planVigente: Boolean, val cuentaActiva: Boolean)
+

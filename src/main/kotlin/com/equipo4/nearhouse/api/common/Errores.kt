@@ -58,3 +58,7 @@ class ServicioNoDisponibleException(mensaje: String) :
 
 class DemasiadasSolicitudesException(mensaje: String) :
     ApiException(HttpStatusCode.TooManyRequests, mensaje)
+
+class PlanRequeridoException(
+    message: String = "Necesitas un plan activo para publicar"
+) : ApiException(HttpStatusCode.Forbidden, message, codigo = "PLAN_REQUERIDO")

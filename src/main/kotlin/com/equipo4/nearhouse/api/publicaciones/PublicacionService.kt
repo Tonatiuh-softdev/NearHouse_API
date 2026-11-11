@@ -4,6 +4,7 @@ import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
+import com.equipo4.nearhouse.api.common.PlanRequeridoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
 import com.equipo4.nearhouse.api.notificaciones.NotificacionService
@@ -21,15 +22,8 @@ class PublicacionService(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun crear(
-        usuarioId: Int,
-        rol: String,
-        datosJson: String?,
-        fotos: List<ByteArray>
-    ): PublicacionCreadaResponse {
-        if (rol !in ROLES_PUBLICADORES) {
-            throw ProhibidoException("Solo vendedores y administradores pueden publicar anuncios")
-        }
+    suspend fun crear(usuarioId: Int, datosJson: String?, fotos: List<ByteArray>): PublicacionCreadaResponse {
+        exigirPlanPublicador(usuarioId)
 
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
@@ -49,15 +43,12 @@ class PublicacionService(
 
     // ---------- Consultas ----------
 
-    /** Anuncios publicados y activos: lo que muestra el home. */
     suspend fun listarPublicas(usuarioLogueadoId: Int? = null): List<PublicacionResponse> =
         repositorio.listar(soloPublicadas = true, estado = null, usuarioVendedorId = null, usuarioLogueadoId = usuarioLogueadoId)
 
-    /** Mis anuncios: todos los del usuario, en cualquier estado (en revisión, publicados o rechazados). */
     suspend fun listarMias(usuarioId: Int): List<PublicacionResponse> =
         repositorio.listar(soloPublicadas = false, estado = null, usuarioVendedorId = usuarioId, usuarioLogueadoId = usuarioId)
 
-    /** Un anuncio. Los no publicados solo los ve su dueño o un administrador. */
     suspend fun obtener(id: Int, usuarioId: Int, rol: String, usuarioLogueadoId: Int? = null): PublicacionResponse {
         val anuncio = repositorio.buscarPorId(id, usuarioLogueadoId ?: usuarioId) ?: throw NoEncontradoException("El anuncio no existe")
         val visible = anuncio.vendedor.id == usuarioId || rol in ROLES_ADMIN || repositorio.esVisible(id)
@@ -76,21 +67,26 @@ class PublicacionService(
         return anuncio
     }
 
+    /** Pausar (activa = false) no requiere plan. Reactivar (activa = true) sí. */
     suspend fun cambiarActiva(usuarioId: Int, id: Int, activa: Boolean): PublicacionResponse {
         val anuncio = propio(id, usuarioId)
         if (anuncio.estado != ESTADO_PUBLICADA) {
             throw ConflictoException("Solo se puede pausar o reactivar un anuncio que ya fue publicado")
         }
+        if (activa) exigirPlanPublicador(usuarioId)
         repositorio.cambiarActiva(id, usuarioId, activa)
         return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
     }
 
+    /** Eliminar no requiere plan: cualquier dueño puede borrar sus anuncios. */
     suspend fun eliminar(usuarioId: Int, id: Int) {
         propio(id, usuarioId)
         repositorio.eliminar(id, usuarioId)
     }
 
     suspend fun editar(usuarioId: Int, id: Int, datosJson: String?, fotosNuevas: List<ByteArray>): PublicacionResponse {
+        exigirPlanPublicador(usuarioId)
+
         val actual = propio(id, usuarioId)
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
@@ -158,6 +154,13 @@ class PublicacionService(
         return anuncio
     }
 
+    /** Botón "Eliminar" del detalle administrativo: borra cualquier anuncio, sin importar su estado. */
+    suspend fun eliminarComoAdmin(rol: String, id: Int) {
+        exigirAdmin(rol)
+        if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
+        repositorio.eliminarCualquiera(id)
+    }
+
     private suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?) {
         if (!repositorio.revisar(id, revisorId, nuevoEstado, motivo)) {
             if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
@@ -165,8 +168,22 @@ class PublicacionService(
         }
     }
 
+    // ---------- Permisos ----------
+
     private fun exigirAdmin(rol: String) {
         if (rol !in ROLES_ADMIN) throw ProhibidoException("Solo los administradores pueden revisar anuncios")
+    }
+
+    /**
+     * El rol y el plan se leen de la base, no del token (el token puede estar viejo).
+     * Admin y super admin pasan sin plan. Vendedor necesita plan vigente.
+     */
+    private suspend fun exigirPlanPublicador(usuarioId: Int) {
+        val estado = repositorio.estadoPublicador(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+        if (!estado.cuentaActiva) throw ProhibidoException("Tu cuenta no está activa")
+        if (estado.rol in ROLES_ADMIN) return
+        if (estado.rol != Roles.VENDEDOR || !estado.planVigente) throw PlanRequeridoException()
     }
 
     private fun leerDatos(datosJson: String?): CrearPublicacionRequest {
@@ -331,7 +348,6 @@ class PublicacionService(
         firma.indices.all { b[desde + it] == firma[it] }
 
     private companion object {
-        val ROLES_PUBLICADORES = setOf(Roles.VENDEDOR, Roles.ADMINISTRADOR, Roles.SUPER_ADMINISTRADOR)
         val ROLES_ADMIN = setOf(Roles.ADMINISTRADOR, Roles.SUPER_ADMINISTRADOR)
         const val ESTADO_PUBLICADA = "PUBLICADA"
         const val ESTADO_RECHAZADA = "RECHAZADA"
