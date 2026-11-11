@@ -22,9 +22,6 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
-import com.equipo4.nearhouse.api.common.NoEncontradoException
-import io.ktor.http.HttpHeaders
-import io.ktor.server.response.header
 
 /**
  * Rutas de usuarios. Solo traducen HTTP <-> servicio:
@@ -163,6 +160,20 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             call.respond(HttpStatusCode.OK, respuesta)
         }
 
+        // POST /api/v1/usuarios/me/telefono/validar -> Valida datos de teléfono nuevo e identidad
+        post("/usuarios/me/telefono/validar") {
+            val req = call.recibir<ValidarCambioTelefonoRequest>()
+            val respuesta = service.validarCambioTelefono(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK, respuesta)
+        }
+
+        // PUT /api/v1/usuarios/me/telefono -> Guarda el teléfono nuevo verificado con Firebase SMS
+        put("/usuarios/me/telefono") {
+            val req = call.recibir<CambiarTelefonoRequest>()
+            val respuesta = service.cambiarTelefono(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK, respuesta)
+        }
+
         // PUT /api/v1/usuarios/me/foto -> sube la foto (multipart, campo "foto")
         put("/usuarios/me/foto") {
             val bytes = call.recibirFoto()
@@ -177,16 +188,6 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         // GET /api/v1/usuarios/me/foto -> regresa la imagen con su tipo (404 si no tiene)
         get("/usuarios/me/foto") {
             val foto = service.obtenerFoto(call.usuarioId())
-            call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
-        }
-
-        // GET /api/v1/usuarios/{id}/foto -> foto pública de cualquier usuario (404 si no tiene)
-        get("/usuarios/{id}/foto") {
-            val id = call.parameters["id"]?.toIntOrNull()
-                ?: throw NoEncontradoException("La foto no existe")
-            val foto = service.obtenerFoto(id)
-            // El parámetro ?v= cambia cuando el usuario sube otra foto, así que se puede cachear
-            call.response.header(HttpHeaders.CacheControl, "public, max-age=86400")
             call.respondBytes(foto.bytes, ContentType.parse(foto.tipo))
         }
 

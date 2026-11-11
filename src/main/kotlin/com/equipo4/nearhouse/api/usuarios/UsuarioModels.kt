@@ -124,6 +124,24 @@ data class NuevaContrasenaRecuperarRequest(
     val contrasenaNueva: String
 )
 
+@Serializable
+data class ValidarCambioTelefonoRequest(
+    val telefonoNuevo: String,
+    val contrasena: String? = null,
+    val googleToken: String? = null
+)
+
+@Serializable
+data class ValidarCambioTelefonoResponse(
+    val comprobante: String
+)
+
+@Serializable
+data class CambiarTelefonoRequest(
+    val comprobante: String,
+    val tokenFirebase: String
+)
+
 /** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */
 @Serializable
 data class ActualizarPerfilRequest(

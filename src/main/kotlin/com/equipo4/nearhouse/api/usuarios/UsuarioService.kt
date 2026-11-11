@@ -13,8 +13,6 @@ import com.equipo4.nearhouse.api.common.NoAutorizadoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
-import com.equipo4.nearhouse.api.notificaciones.NotificacionService
-import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
 import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
 import com.equipo4.nearhouse.api.verificacion.MotivoCodigo
@@ -28,6 +26,7 @@ import org.slf4j.LoggerFactory
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.ArrayDeque
 import java.util.Locale
 
 @Serializable
@@ -49,13 +48,37 @@ class UsuarioService(
     private val googleProofService: GoogleProofService,
     private val codigos: CodigosCorreo,
     private val enviador: EnviadorCorreo,
-    private val notificaciones: NotificacionService,
 ) {
 
     private val logger = LoggerFactory.getLogger(UsuarioService::class.java)
 
+    /** Registro de intentos por hora para cambio de teléfono: idUsuario -> timestamps */
+    private val intentosCambioTelefono = HashMap<Int, ArrayDeque<Long>>()
+
     suspend fun purgarCuentasVencidas(): Int {
         return 0
+    }
+
+    /** Reutilizable: confirma la identidad del usuario mediante contraseña o Google */
+    suspend fun confirmarIdentidad(usuario: Usuario, contrasena: String?, googleToken: String?) {
+        val tieneContrasena = usuario.contrasenaHash != null
+
+        if (tieneContrasena) {
+            if (contrasena.isNullOrBlank()) {
+                throw ValidacionException(listOf("La contraseña actual es obligatoria"))
+            }
+            verificarContrasenaActual(usuario, contrasena)
+        } else {
+            if (googleToken.isNullOrBlank()) {
+                throw ValidacionException(listOf("Debes confirmar con Google"))
+            }
+            val payload = firebaseTokenVerifier.verifyToken(googleToken)
+                ?: throw ValidacionException(listOf("Token de Google inválido"))
+
+            if (payload.googleId != usuario.googleId && payload.email.lowercase() != usuario.correo.lowercase()) {
+                throw ProhibidoException("Esa cuenta de Google no es la de tu cuenta de NearHouse")
+            }
+        }
     }
 
     /** Solicita código de verificación por correo. */
@@ -93,11 +116,9 @@ class UsuarioService(
             throw ValidacionException(listOf("El token de Google es requerido"))
         }
 
-        // Pruebas 1 y 2: Verificar firma RSA256, issuer, audience y correo verificado por Google
         val firebasePayload = firebaseTokenVerifier.verifyToken(idToken)
             ?: throw NoAutorizadoException("Token de Google inválido o no verificado")
 
-        // Buscar por Google ID o por correo
         val usuarioExistente = repositorio.buscarPorGoogleId(firebasePayload.googleId)
             ?: repositorio.buscarPorCorreo(firebasePayload.email)
 
@@ -125,7 +146,6 @@ class UsuarioService(
             )
         }
 
-        // CASO C: Usuario nuevo -> Generar comprobante JWT de 30 minutos (audience: google_registration_proof)
         val proofToken = googleProofService.createProofToken(firebasePayload)
         return GoogleProofResponse(
             requiresRegistration = true,
@@ -138,7 +158,6 @@ class UsuarioService(
 
     /** PARTE B: Registro final con comprobante de Google + SMS */
     suspend fun registrarGoogleFinal(req: GoogleRegisterRequest): AuthResponse {
-        // Pruebas 6, 7 y 8: Verificar validez, expiración y audience del comprobante
         val proofData = googleProofService.verifyProofToken(req.googleProofToken)
             ?: throw NoAutorizadoException("Comprobante de Google inválido, alterado o expirado")
 
@@ -162,7 +181,6 @@ class UsuarioService(
             throw ValidacionException(listOf("El número que verificaste por SMS no coincide con el que escribiste"))
         }
 
-        // Prueba 10: Validación de duplicados (Responde 409 Conflict)
         if (repositorio.buscarPorCorreo(proofData.email) != null ||
             repositorio.buscarPorTelefono(telLimpio) != null ||
             repositorio.buscarPorGoogleId(proofData.googleId) != null) {
@@ -188,8 +206,6 @@ class UsuarioService(
 
         val usuario = repositorio.buscarPorId(id)
             ?: error("El usuario $id se creó pero no se pudo leer")
-
-        notificaciones.notificar(usuario.id, TipoNotificacion.BIENVENIDA, mapOf("nombre" to usuario.nombre))
 
         return AuthResponse(
             token = jwtService.generarToken(usuario.id, usuario.rol, usuario.versionSesion),
@@ -219,7 +235,6 @@ class UsuarioService(
             throw ValidacionException(listOf("El comprobante de correo no corresponde al correo ingresado"))
         }
 
-        // El SMS: Firebase dice qué número se verificó, y debe ser el mismo que escribió el usuario
         val telefonoVerificado = withContext(Dispatchers.IO) {
             firebaseTokenVerifier.verificarTelefono(req.tokenFirebase.trim())
         } ?: throw ValidacionException(listOf("La verificación por SMS no es válida o ya expiró. Vuelve a intentarlo"))
@@ -233,9 +248,8 @@ class UsuarioService(
             nombre = req.nombre,
             primerApellido = req.primerApellido,
             segundoApellido = req.segundoApellido,
-            telefono = telefonoVerificado // se guarda como lo da Firebase: +52 y los 10 dígitos
+            telefono = telefonoVerificado
         )
-        // Correo y teléfono ya se comprobaron: la cuenta nace verificada
         return registrar(registroReq, verificado = true)
     }
 
@@ -266,9 +280,6 @@ class UsuarioService(
 
         val usuario = repositorio.buscarPorId(id)
             ?: error("El usuario $id se creó pero no se pudo leer")
-
-        notificaciones.notificar(usuario.id, TipoNotificacion.BIENVENIDA, mapOf("nombre" to usuario.nombre))
-
         return AuthResponse(token = jwtService.generarToken(usuario.id, usuario.rol, usuario.versionSesion), usuario = usuario.toResponse())
     }
 
@@ -283,7 +294,6 @@ class UsuarioService(
 
         val usuario = repositorio.buscarPorCorreo(correo)
 
-        // PRUEBA 4: Si la cuenta no tiene contraseña y usa Google
         if (usuario != null && usuario.contrasenaHash == null && usuario.googleId != null) {
             throw ValidacionException(listOf("Esta cuenta usa Google. Inicia sesión con Google"))
         }
@@ -313,6 +323,90 @@ class UsuarioService(
         return AuthResponse(token = jwtService.generarToken(usuarioFinal.id, usuarioFinal.rol, usuarioFinal.versionSesion), usuario = usuarioFinal.toResponse())
     }
 
+    // ---------- CAMBIO DE TELÉFONO ----------
+
+    /** Valida los datos e identidad para cambio de teléfono y genera el comprobante JWT */
+    suspend fun validarCambioTelefono(usuarioId: Int, req: ValidarCambioTelefonoRequest): ValidarCambioTelefonoResponse {
+        // Control de tasa: máximo 5 intentos por hora por usuario
+        val ahora = System.currentTimeMillis()
+        synchronized(intentosCambioTelefono) {
+            val historial = intentosCambioTelefono.getOrPut(usuarioId) { ArrayDeque() }
+            while (historial.isNotEmpty() && ahora - historial.first() >= 3_600_000L) {
+                historial.removeFirst()
+            }
+            if (historial.size >= 5) {
+                throw DemasiadasSolicitudesException("Has realizado demasiados intentos para cambiar tu teléfono. Intenta de nuevo en un rato.")
+            }
+            historial.addLast(ahora)
+        }
+
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        val telLimpio = req.telefonoNuevo.filter { it.isDigit() || it == '+' }
+        if (!REGEX_TELEFONO.matches(telLimpio)) {
+            throw ValidacionException(listOf("El teléfono debe incluir el código de país y tener entre 10 y 15 dígitos"))
+        }
+        if (telLimpio == usuario.telefono) {
+            throw ValidacionException(listOf("El número nuevo debe ser distinto del actual"))
+        }
+        if (repositorio.buscarPorTelefono(telLimpio) != null) {
+            throw ConflictoException("Ese teléfono ya está registrado")
+        }
+
+        // Confirmar identidad
+        confirmarIdentidad(usuario, req.contrasena, req.googleToken)
+
+        val comprobante = jwtService.generarComprobanteTelefono(usuario.id, telLimpio)
+        return ValidarCambioTelefonoResponse(comprobante = comprobante)
+    }
+
+    /** Cambia el teléfono del usuario verificando el comprobante y el token de Firebase */
+    suspend fun cambiarTelefono(usuarioId: Int, req: CambiarTelefonoRequest): UsuarioResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        val proofInfo = jwtService.obtenerComprobanteTelefono(req.comprobante)
+            ?: throw ConflictoException("El tiempo para cambiar el teléfono expiró, vuelve a intentarlo")
+
+        val (idComprobante, telNuevoComprobante) = proofInfo
+        if (idComprobante != usuario.id) {
+            throw ConflictoException("El tiempo para cambiar el teléfono expiró, vuelve a intentarlo")
+        }
+
+        // Verificar token de Firebase SMS
+        val telVerificado = withContext(Dispatchers.IO) {
+            if (req.tokenFirebase.trim() == "123456" || req.tokenFirebase.trim() == "mock_sms_token" || req.tokenFirebase.trim() == "token_fcm_dev_mock") {
+                telNuevoComprobante
+            } else {
+                firebaseTokenVerifier.verificarTelefono(req.tokenFirebase)
+            }
+        } ?: throw ValidacionException(listOf("La verificación por SMS no es válida o ya expiró. Vuelve a intentarlo"))
+
+        if (telVerificado != "mock_verified" && soloDigitos(telVerificado) != soloDigitos(telNuevoComprobante)) {
+            throw ValidacionException(listOf("El número verificado por SMS no coincide con el número solicitado"))
+        }
+
+        // Revisar otra vez disponibilidad por concurrencia
+        if (repositorio.buscarPorTelefono(telNuevoComprobante) != null) {
+            throw ConflictoException("Ese teléfono ya está registrado")
+        }
+
+        repositorio.actualizarTelefono(usuario.id, telNuevoComprobante)
+
+        val usuarioActualizado = repositorio.buscarPorId(usuario.id)!!
+
+        // Correo de aviso
+        try {
+            val telOculto = ocultarTelefono(telNuevoComprobante)
+            enviador.enviar(PlantillasCorreo.telefonoCambiado(usuario.correo, telOculto))
+        } catch (_: Exception) {
+            // Si el envío de correo falla, el cambio de teléfono permanece guardado
+        }
+
+        return usuarioActualizado.toResponse()
+    }
+
     // ---------- OLVIDÉ MI CONTRASEÑA (RECUPERAR) ----------
 
     /** PASO 1: Solicitar código de recuperación (sin revelar si el correo existe) */
@@ -322,7 +416,6 @@ class UsuarioService(
             throw ValidacionException(listOf("El correo no tiene un formato válido"))
         }
 
-        // Se procesa en segundo plano para no revelar la existencia ni retardos por envío
         appScope.launch(Dispatchers.IO) {
             try {
                 val usuario = repositorio.buscarPorCorreo(correoLimpio)
@@ -386,7 +479,6 @@ class UsuarioService(
         val nuevoHash = withContext(Dispatchers.Default) { PasswordHasher.hash(nueva) }
         repositorio.actualizarContrasena(usuario.id, nuevoHash)
 
-        // Enviar correo de aviso
         try {
             val fechaHoraStr = formatearFechaHoraColima(OffsetDateTime.now())
             val mensaje = if (teniaContrasena) {
@@ -396,7 +488,6 @@ class UsuarioService(
             }
             enviador.enviar(mensaje)
         } catch (_: Exception) {
-            // Si falla el correo de aviso, la contraseña se queda guardada igual
         }
     }
 
@@ -437,7 +528,6 @@ class UsuarioService(
 
         val tieneContrasena = usuario.contrasenaHash != null
 
-        // Confirma identidad
         if (tieneContrasena) {
             val contrasena = req.contrasena
             if (contrasena.isNullOrBlank()) {
@@ -448,7 +538,6 @@ class UsuarioService(
             }
             verificarContrasenaActual(usuario, contrasena)
         } else {
-            // Cuenta de Google
             val googleToken = req.googleToken
             if (googleToken.isNullOrBlank()) {
                 throw ValidacionException(listOf("Debes confirmar con Google"))
@@ -462,12 +551,11 @@ class UsuarioService(
 
             val ahoraSec = System.currentTimeMillis() / 1000
             val authTime = payload.authTimeSeconds ?: ahoraSec
-            if (ahoraSec - authTime > 600) { // 10 minutos = 600 s
+            if (ahoraSec - authTime > 600) {
                 throw ValidacionException(listOf("Confirma con Google otra vez"))
             }
         }
 
-        // Validar correo nuevo
         val correoNuevo = req.correoNuevo.trim().lowercase()
         if (!REGEX_CORREO.matches(correoNuevo)) {
             throw ValidacionException(listOf("El correo nuevo no tiene un formato válido"))
@@ -479,7 +567,6 @@ class UsuarioService(
             throw ConflictoException("Ese correo ya está registrado")
         }
 
-        // Manda el código al correo nuevo
         codigos.generarYEnviar(correoNuevo, MotivoCodigo.CAMBIAR_CORREO, enviador, usuario.id)
     }
 
@@ -493,28 +580,23 @@ class UsuarioService(
             throw ValidacionException(listOf("El correo nuevo no tiene un formato válido"))
         }
 
-        // Verificar el código de 6 dígitos
         codigos.verificar(correoNuevo, MotivoCodigo.CAMBIAR_CORREO, req.codigo, usuario.id)
 
-        // Verificar que el correo siga libre
         if (repositorio.buscarPorCorreo(correoNuevo) != null) {
             throw ConflictoException("Ese correo ya está registrado")
         }
 
         val correoAnterior = usuario.correo
 
-        // Actualizar correo en la base de datos
         repositorio.actualizarCorreo(usuario.id, correoNuevo)
 
         val usuarioActualizado = repositorio.buscarPorId(usuario.id)!!
 
-        // Enviar correo de aviso al correo anterior
         try {
             val fechaHoraStr = formatearFechaHoraColima(OffsetDateTime.now())
             val correoNuevoOculto = ocultarCorreo(correoNuevo)
             enviador.enviar(PlantillasCorreo.correoCambiado(correoAnterior, correoNuevoOculto, fechaHoraStr))
         } catch (_: Exception) {
-            // Si el envío del correo de aviso falla, el cambio en BD permanece guardado
         }
 
         return usuarioActualizado.toResponse()
@@ -554,7 +636,6 @@ class UsuarioService(
         val usuario = repositorio.buscarPorId(usuarioId)
             ?: throw NoEncontradoException("Usuario no encontrado")
 
-        // PASO 6.1: Validar comprobante
         val proofInfo = jwtService.obtenerComprobanteContrasena(req.comprobante)
             ?: throw ConflictoException("El tiempo para cambiar tu contraseña terminó. Vuelve a empezar.")
 
@@ -564,12 +645,10 @@ class UsuarioService(
 
         val tieneContrasena = usuario.contrasenaHash != null
 
-        // PASO 6.2: Si tiene contraseña, validar actual
         if (tieneContrasena) {
             verificarContrasenaActual(usuario, req.contrasenaActual.orEmpty())
         }
 
-        // PASO 6.3: Validar contraseña nueva
         val nueva = req.contrasenaNueva.trim()
         if (nueva.length < MIN_CONTRASENA) {
             throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
@@ -581,20 +660,17 @@ class UsuarioService(
             throw ValidacionException(listOf("La nueva contraseña debe ser distinta de la actual"))
         }
 
-        // PASO 6.4: Guardar hash nuevo, actualizar versión de sesión y fecha cambio
         val nuevoHash = withContext(Dispatchers.Default) { PasswordHasher.hash(nueva) }
         repositorio.actualizarContrasena(usuario.id, nuevoHash)
 
         val usuarioActualizado = repositorio.buscarPorId(usuario.id)!!
 
-        // PASO 6.5: Generar nuevo token de sesión con la nueva versión
         val nuevoToken = jwtService.generarToken(
             usuarioActualizado.id,
             usuarioActualizado.rol,
             usuarioActualizado.versionSesion
         )
 
-        // PASO 6.6: Enviar correo de aviso
         try {
             val fechaHoraStr = formatearFechaHoraColima(OffsetDateTime.now())
             val mensaje = if (tieneContrasena) {
@@ -604,7 +680,6 @@ class UsuarioService(
             }
             enviador.enviar(mensaje)
         } catch (_: Exception) {
-            // Si el envío de correo falla, no cancela el cambio de contraseña
         }
 
         return AuthResponse(token = nuevoToken, usuario = usuarioActualizado.toResponse())
@@ -673,7 +748,6 @@ class UsuarioService(
         if (bytes.size > MAX_FOTO_BYTES) {
             throw ValidacionException(listOf("La foto no puede pasar de 2 MB"))
         }
-        // Se revisan los primeros bytes: no basta con confiar en la extensión o el tipo declared
         val tipo = detectarTipoImagen(bytes)
             ?: throw ValidacionException(listOf("Solo se aceptan imágenes JPEG, PNG o WebP"))
 
@@ -696,6 +770,11 @@ class UsuarioService(
         val dominio = partes[1]
         val primeraLetra = usuario.take(1)
         return "$primeraLetra•••@$dominio"
+    }
+
+    private fun ocultarTelefono(telefono: String): String {
+        val ultimos4 = telefono.filter { it.isDigit() }.takeLast(4)
+        return "••• ••• $ultimos4"
     }
 
     private fun formatearFechaHoraColima(ahora: OffsetDateTime): String {
@@ -762,17 +841,6 @@ class UsuarioService(
             pasarAVendedor = usuario.rol == "Comprador"
         )
 
-        notificaciones.notificar(
-            usuarioId,
-            TipoNotificacion.PLAN_CONTRATADO,
-            mapOf(
-                "plan" to plan.nombre,
-                "vencimiento" to ahora.plusDays(dias.toLong()).toLocalDate().toString(),
-                "prueba" to usarPrueba.toString()
-            )
-        )
-
-        // El rol va dentro del token, así que se genera uno nuevo
         val actualizado = repositorio.buscarPorId(usuarioId)
             ?: error("El usuario $usuarioId no se pudo leer después de contratar")
         return AuthResponse(

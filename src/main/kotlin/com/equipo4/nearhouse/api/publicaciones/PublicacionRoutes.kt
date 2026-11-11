@@ -53,10 +53,9 @@ fun Route.publicacionRoutes(service: PublicacionService) {
 
         // POST /api/v1/publicaciones -> crea un anuncio (queda EN_REVISION)
         post("/publicaciones") {
-            val rol = call.usuarioRol()
             val usuarioId = call.usuarioId()
             val (datos, fotos) = call.recibirPublicacion()
-            call.respond(HttpStatusCode.Created, service.crear(usuarioId, rol, datos, fotos))
+            call.respond(HttpStatusCode.Created, service.crear(usuarioId, datos, fotos))
         }
 
         // GET /api/v1/publicaciones/mias -> los anuncios del usuario con sesión, en cualquier estado
@@ -108,6 +107,12 @@ fun Route.publicacionRoutes(service: PublicacionService) {
             post("/{id}/rechazar") {
                 val req = call.recibir<RechazarRequest>()
                 call.respond(service.rechazar(call.usuarioRol(), call.usuarioId(), call.idDeRuta(), req.motivo))
+            }
+
+            // DELETE /api/v1/admin/publicaciones/{id} -> elimina cualquier anuncio (botón Eliminar del administrador)
+            delete("/{id}") {
+                service.eliminarComoAdmin(call.usuarioRol(), call.idDeRuta())
+                call.respond(HttpStatusCode.NoContent)
             }
         }
     }
