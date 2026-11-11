@@ -47,6 +47,9 @@ data class CrearPublicacionRequest(
 @Serializable
 data class ActivaRequest(val activa: Boolean)
 
+@Serializable
+data class MotivoRequest(val motivo: String)
+
 // ---------- Lo que la API RESPONDE ----------
 
 @Serializable

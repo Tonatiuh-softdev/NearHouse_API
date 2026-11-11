@@ -573,6 +573,55 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Desactiva o reactiva como administrador. Regresa false si el estado no permite el cambio. */
+    suspend fun cambiarActivaAdmin(id: Int, revisorId: Int, activa: Boolean, motivo: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { conn ->
+                conn.autoCommit = false
+                try {
+                    val filas = conn.prepareStatement(
+                        """
+                        UPDATE publicacion
+                        SET b_estatus_publicacion = ?,
+                            fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
+                            fke_id_usuario_actualizacion = ?
+                        WHERE pke_id_publicacion = ? AND t_estado_publicacion = 'PUBLICADA'
+                        """
+                    ).use { ps ->
+                        ps.setBoolean(1, activa)
+                        ps.setInt(2, revisorId)
+                        ps.setInt(3, id)
+                        ps.executeUpdate()
+                    }
+                    if (filas == 0) {
+                        conn.rollback()
+                        return@use false
+                    }
+                    conn.prepareStatement(
+                        """
+                        INSERT INTO publicacion_historial
+                            (fke_id_publicacion, t_estado_anterior, t_estado_nuevo, t_motivo, fke_id_usuario)
+                        VALUES (?, ?, ?, ?, ?)
+                        """
+                    ).use { ps ->
+                        ps.setInt(1, id)
+                        ps.setString(2, if (activa) "DESACTIVADA" else "PUBLICADA")
+                        ps.setString(3, if (activa) "REACTIVADA" else "DESACTIVADA")
+                        ps.setString(4, motivo)
+                        ps.setInt(5, revisorId)
+                        ps.executeUpdate()
+                    }
+                    conn.commit()
+                    true
+                } catch (e: Exception) {
+                    conn.rollback()
+                    throw e
+                } finally {
+                    conn.autoCommit = true
+                }
+            }
+        }
+
     private companion object {
         const val SELECT_PUBLICACION = """
             SELECT p.pke_id_publicacion, p.fke_id_usuario, p.t_nombre_publicacion, p.t_descripcion_publicacion,

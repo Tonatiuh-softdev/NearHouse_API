@@ -154,6 +154,26 @@ class PublicacionService(
         return anuncio
     }
 
+    /** Desactivar como administrador: pide motivo, solo sobre anuncios publicados. */
+    suspend fun desactivarComoAdmin(rol: String, revisorId: Int, id: Int, motivo: String) {
+        exigirAdmin(rol)
+        val limpio = motivo.trim()
+        if (limpio.length < 5) {
+            throw ValidacionException(listOf("El motivo debe tener al menos 5 caracteres"))
+        }
+        if (!repositorio.cambiarActivaAdmin(id, revisorId, activa = false, motivo = limpio)) {
+            throw ConflictoException("Solo se puede desactivar un anuncio publicado")
+        }
+    }
+
+    /** Reactivar como administrador. */
+    suspend fun reactivarComoAdmin(rol: String, revisorId: Int, id: Int) {
+        exigirAdmin(rol)
+        if (!repositorio.cambiarActivaAdmin(id, revisorId, activa = true, motivo = null)) {
+            throw ConflictoException("Solo se puede reactivar un anuncio publicado")
+        }
+    }
+
     /** Botón "Eliminar" del detalle administrativo: borra cualquier anuncio, sin importar su estado. */
     suspend fun eliminarComoAdmin(rol: String, id: Int) {
         exigirAdmin(rol)
