@@ -15,8 +15,7 @@ import java.time.OffsetDateTime
 import javax.sql.DataSource
 
 /**
- * Única capa que habla con PostgreSQL para crear anuncios.
- * Todo se guarda en UNA transacción: si algo falla, no queda un anuncio a medias.
+ * Única capa que habla con PostgreSQL para crear y consultar anuncios.
  */
 class PublicacionRepository(private val dataSource: DataSource) {
 
@@ -34,7 +33,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 val propiedadId = insertarPropiedad(conn, publicacionId, coloniaId, p)
                 if (p.inmueble != null) insertarInmueble(conn, propiedadId, p.inmueble)
                 if (p.usoSuelo != null) insertarTerreno(conn, propiedadId, p.usoSuelo)
-                // La primera foto es la portada (orden 1)
                 val fotoIds = fotos.mapIndexed { i, f -> insertarFoto(conn, propiedadId, i + 1, f) }
                 conn.commit()
                 PublicacionCreadaResponse(id = publicacionId, titulo = p.titulo, estado = estado, fotos = fotoIds)
@@ -49,34 +47,33 @@ class PublicacionRepository(private val dataSource: DataSource) {
 
     // ---------- Consultas (home y administrador) ----------
 
-    /**
-     * Anuncios con todos sus datos, del más nuevo al más viejo (máximo 500).
-     * [soloPublicadas] = lo que ve el público. [estado] filtra por estado de revisión.
-     * [usuarioId] deja solo los anuncios de ese vendedor (Mis anuncios).
-     */
-    suspend fun listar(soloPublicadas: Boolean, estado: String?, usuarioId: Int? = null): List<PublicacionResponse> =
+    suspend fun listar(
+        soloPublicadas: Boolean,
+        estado: String?,
+        usuarioVendedorId: Int? = null,
+        usuarioLogueadoId: Int? = null
+    ): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             val filtros = buildList {
-                // Lo que ve el público sale de vw_publicacion_visible (migración 08): publicado, activo
-                // y de un dueño activo. Así no salen los anuncios de cuentas desactivadas, por eliminarse o suspendidas.
                 if (soloPublicadas) add("EXISTS (SELECT 1 FROM vw_publicacion_visible v WHERE v.pke_id_publicacion = p.pke_id_publicacion)")
                 if (estado != null) add("p.t_estado_publicacion = ?")
-                if (usuarioId != null) add("p.fke_id_usuario = ?")
+                if (usuarioVendedorId != null) add("p.fke_id_usuario = ?")
             }
             val where = if (filtros.isEmpty()) "" else " WHERE " + filtros.joinToString(" AND ")
+            val guardadosSet = if (usuarioLogueadoId != null) obtenerIdsGuardados(usuarioLogueadoId) else emptySet()
+
             dataSource.connection.use { conn ->
                 conn.prepareStatement("$SELECT_PUBLICACION$where ORDER BY p.fh_fecha_publicacion DESC LIMIT 500").use { ps ->
                     var indice = 1
                     if (estado != null) ps.setString(indice++, estado)
-                    if (usuarioId != null) ps.setInt(indice, usuarioId)
+                    if (usuarioVendedorId != null) ps.setInt(indice, usuarioVendedorId)
                     ps.executeQuery().use { rs ->
-                        buildList { while (rs.next()) add(rs.toPublicacion()) }
+                        buildList { while (rs.next()) add(rs.toPublicacion(guardadosSet)) }
                     }
                 }
             }
         }
 
-    /** Si el público puede ver el anuncio: está en vw_publicacion_visible (publicado, activo y de una cuenta activa). */
     suspend fun esVisible(id: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
             conn.prepareStatement("SELECT 1 FROM vw_publicacion_visible WHERE pke_id_publicacion = ?").use { ps ->
@@ -86,19 +83,45 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
-    suspend fun buscarPorId(id: Int): PublicacionResponse? = withContext(Dispatchers.IO) {
+    suspend fun buscarPorId(id: Int, usuarioLogueadoId: Int? = null): PublicacionResponse? = withContext(Dispatchers.IO) {
+        val guardadosSet = if (usuarioLogueadoId != null) obtenerIdsGuardados(usuarioLogueadoId) else emptySet()
         dataSource.connection.use { conn ->
             conn.prepareStatement("$SELECT_PUBLICACION WHERE p.pke_id_publicacion = ?").use { ps ->
                 ps.setInt(1, id)
-                ps.executeQuery().use { rs -> if (rs.next()) rs.toPublicacion() else null }
+                ps.executeQuery().use { rs -> if (rs.next()) rs.toPublicacion(guardadosSet) else null }
             }
         }
     }
 
-    /**
-     * Pasa un anuncio de EN_REVISION a [nuevoEstado] (PUBLICADA o RECHAZADA).
-     * Regresa false si no existe o si ya había sido revisado.
-     */
+    suspend fun buscarPorIds(ids: List<Int>, usuarioLogueadoId: Int? = null): List<PublicacionResponse> =
+        withContext(Dispatchers.IO) {
+            if (ids.isEmpty()) return@withContext emptyList()
+            val sql = "$SELECT_PUBLICACION WHERE p.pke_id_publicacion = ANY(?)"
+            val guardadosSet = if (usuarioLogueadoId != null) obtenerIdsGuardados(usuarioLogueadoId) else emptySet()
+            dataSource.connection.use { conn ->
+                conn.prepareStatement(sql).use { ps ->
+                    ps.setArray(1, conn.createArrayOf("integer", ids.toTypedArray<Any?>()))
+                    ps.executeQuery().use { rs ->
+                        val lista = buildList { while (rs.next()) add(rs.toPublicacion(guardadosSet)) }
+                        val mapa = lista.associateBy { it.id }
+                        ids.mapNotNull { mapa[it] }
+                    }
+                }
+            }
+        }
+
+    suspend fun obtenerIdsGuardados(usuarioId: Int): Set<Int> = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = "SELECT fke_id_publicacion FROM guardado WHERE fke_id_usuario = ?"
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, usuarioId)
+                ps.executeQuery().use { rs ->
+                    buildSet { while (rs.next()) add(rs.getInt(1)) }
+                }
+            }
+        }
+    }
+
     suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?): Boolean =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { conn ->
@@ -124,9 +147,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
-    // ---------- Acciones del vendedor sobre sus anuncios ----------
-
-    /** Pausa o reactiva un anuncio. Regresa false si no existe o no es de ese usuario. */
     suspend fun cambiarActiva(id: Int, usuarioId: Int, activa: Boolean): Boolean =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { conn ->
@@ -148,10 +168,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
-    /**
-     * Borra el anuncio de verdad. La propiedad, las fotos y los reportes se borran en cascada.
-     * Regresa false si no existe o no es de ese usuario.
-     */
     suspend fun eliminar(id: Int, usuarioId: Int): Boolean =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { conn ->
@@ -165,10 +181,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
-    /**
-     * Reemplaza los datos de un anuncio propio y lo manda otra vez a revisión.
-     * Todo en una transacción: si algo falla, el anuncio queda como estaba.
-     */
     suspend fun editar(
         id: Int,
         usuarioId: Int,
@@ -186,7 +198,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
                 val propiedadId = buscarPropiedad(conn, id)
                 actualizarPropiedad(conn, propiedadId, coloniaId, p)
 
-                // El detalle depende del tipo (inmueble o terreno): se borra el anterior y se guarda el nuevo
                 borrarDetalle(conn, "inmueble", propiedadId)
                 borrarDetalle(conn, "terreno", propiedadId)
                 if (p.inmueble != null) insertarInmueble(conn, propiedadId, p.inmueble)
@@ -260,7 +271,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
-    /** [tabla] siempre es "inmueble" o "terreno" (valores fijos del código, nunca datos del usuario). */
     private fun borrarDetalle(conn: Connection, tabla: String, propiedadId: Int) {
         conn.prepareStatement("DELETE FROM $tabla WHERE fke_id_propiedad = ?").use { ps ->
             ps.setInt(1, propiedadId)
@@ -277,10 +287,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
-    /**
-     * Las fotos que se quedan conservan su lugar. Las nuevas ocupan lugares libres; si no se reemplaza la portada,
-     * van después de la portada actual para no quitarle su lugar.
-     */
     private fun agregarFotos(conn: Connection, propiedadId: Int, nuevas: List<FotoNueva>, reemplazaPortada: Boolean) {
         if (nuevas.isEmpty()) return
         val usados = conn.prepareStatement("SELECT e_orden_visibilidad_foto FROM foto WHERE fke_id_propiedad = ?").use { ps ->
@@ -307,7 +313,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
 
     private fun ResultSet.intOrNull(columna: String): Int? = getInt(columna).let { if (wasNull()) null else it }
 
-    private fun ResultSet.toPublicacion(): PublicacionResponse {
+    private fun ResultSet.toPublicacion(guardadosSet: Set<Int> = emptySet()): PublicacionResponse {
+        val pubId = getInt("pke_id_publicacion")
         val tipo = getString("t_tipo_propiedad")
         val fechaRevision = getObject("fh_fecha_revision_publicacion", OffsetDateTime::class.java)
         val fotos = (getArray("fotos").array as Array<*>).map { (it as Number).toInt() }
@@ -317,12 +324,11 @@ class PublicacionRepository(private val dataSource: DataSource) {
         val revisor = getString("revisor_nombre")?.let { nombre ->
             listOfNotNull(nombre, getString("revisor_apellido1")).joinToString(" ")
         }
-        // wasNull() solo sirve justo después de leer la columna, por eso se revisa antes de hacer otra lectura
         val versionFotoLeida = getLong("vendedor_foto_version")
         val versionFoto = if (wasNull()) null else versionFotoLeida
 
         return PublicacionResponse(
-            id = getInt("pke_id_publicacion"),
+            id = pubId,
             titulo = getString("t_nombre_publicacion"),
             descripcion = getString("t_descripcion_publicacion"),
             reglas = getString("t_reglas_publicacion"),
@@ -337,7 +343,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
             codigoPostal = getString("t_codigo_postal_propiedad"),
             latitud = getDouble("n_latitud_propiedad"),
             longitud = getDouble("n_longitud_propiedad"),
-            // Los anuncios anteriores a este cambio guardaron 1 como relleno: ese valor no se manda
             superficie = getInt("e_superficie_propiedad").takeIf { tipo == "TERRENO" || it > 1 },
             usoSuelo = getString("t_uso_suelo_terreno"),
             dormitorios = intOrNull("e_dormitorios_inmueble"),
@@ -365,7 +370,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     revisor = revisor,
                     motivo = getString("t_motivo_rechazo_publicacion")
                 )
-            }
+            },
+            guardada = guardadosSet.contains(pubId)
         )
     }
 
@@ -380,7 +386,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
-    /** fn_obtener_colonia (migración 03): regresa el id y, si la colonia no existe, la agrega sola. */
     private fun obtenerColonia(conn: Connection, nombre: String): Int {
         val id = conn.prepareStatement("SELECT fn_obtener_colonia(?)").use { ps ->
             ps.setString(1, nombre)
@@ -505,7 +510,6 @@ class PublicacionRepository(private val dataSource: DataSource) {
         if (value == null) setNull(index, Types.INTEGER) else setInt(index, value)
     }
 
-    /** Convierte los errores de PostgreSQL en mensajes entendibles para la app. */
     private fun traducirError(e: SQLException): Exception {
         val restriccion = (e as? PSQLException)?.serverErrorMessage?.constraint
         return when (e.sqlState) {

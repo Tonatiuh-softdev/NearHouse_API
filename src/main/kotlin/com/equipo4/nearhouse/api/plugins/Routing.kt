@@ -4,6 +4,11 @@ import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 import com.equipo4.nearhouse.api.admin.usuarios.adminUsuarioRoutes
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.colonias.coloniaRoutes
+import com.equipo4.nearhouse.api.guardados.GuardadoService
+import com.equipo4.nearhouse.api.guardados.guardadoRoutes
+import com.equipo4.nearhouse.api.notificaciones.DispositivoService
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
+import com.equipo4.nearhouse.api.notificaciones.notificacionRoutes
 import com.equipo4.nearhouse.api.publicaciones.PublicacionService
 import com.equipo4.nearhouse.api.publicaciones.publicacionRoutes
 import com.equipo4.nearhouse.api.reportes.ReporteService
@@ -20,10 +25,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import javax.sql.DataSource
-import com.equipo4.nearhouse.api.notificaciones.NotificacionService
-import com.equipo4.nearhouse.api.notificaciones.notificacionRoutes
-import com.equipo4.nearhouse.api.notificaciones.DispositivoService
-import com.equipo4.nearhouse.api.notificaciones.dispositivoRoutes
 
 @Serializable
 data class InfoResponse(val nombre: String, val version: String)
@@ -40,7 +41,8 @@ fun Application.configureRouting(
     reporteService: ReporteService,
     adminUsuarioService: AdminUsuarioService,
     notificacionService: NotificacionService,
-    dispositivoService: DispositivoService,   // ← agregado
+    dispositivoService: DispositivoService,
+    guardadoService: GuardadoService,
 ) {
     routing {
         get("/") {
@@ -66,7 +68,7 @@ fun Application.configureRouting(
             }
         }
 
-        // Todas las rutas de negocio (incluidas /auth/google y /auth/register/google) viven bajo /api/v1
+        // Todas las rutas de negocio viven bajo /api/v1
         route("/api/v1") {
             usuarioRoutes(usuarioService)
             coloniaRoutes(coloniaService)
@@ -74,7 +76,7 @@ fun Application.configureRouting(
             reporteRoutes(reporteService)
             adminUsuarioRoutes(adminUsuarioService)
             notificacionRoutes(notificacionService)
-            dispositivoRoutes(dispositivoService)   // ← agregado
+            guardadoRoutes(guardadoService)
         }
     }
 }
