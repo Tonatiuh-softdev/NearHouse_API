@@ -114,6 +114,19 @@ fun Route.publicacionRoutes(service: PublicacionService) {
                 service.eliminarComoAdmin(call.usuarioRol(), call.idDeRuta())
                 call.respond(HttpStatusCode.NoContent)
             }
+
+            // POST /api/v1/admin/publicaciones/{id}/desactivar  {"motivo": "..."}
+            post("/{id}/desactivar") {
+                val req = call.recibir<MotivoRequest>()
+                service.desactivarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta(), req.motivo)
+                call.respond(HttpStatusCode.NoContent)
+            }
+
+            // POST /api/v1/admin/publicaciones/{id}/reactivar
+            post("/{id}/reactivar") {
+                service.reactivarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta())
+                call.respond(HttpStatusCode.NoContent)
+            }
         }
     }
 }
