@@ -142,17 +142,21 @@ class UsuarioService(
         val proofData = googleProofService.verifyProofToken(req.googleProofToken)
             ?: throw NoAutorizadoException("Comprobante de Google inválido, alterado o expirado")
 
-        // Prueba 9: el teléfono debe venir verificado por SMS (token de Firebase)
+        val nombre = req.nombre.trim()
+        val primerApellido = req.apellidos.trim()
+        val segundoApellido = req.segundoApellido?.trim()?.takeIf { it.isNotEmpty() }
+        if (nombre.isEmpty() || primerApellido.isEmpty()) {
+            throw ValidacionException(listOf("El nombre y el primer apellido son obligatorios"))
+        }
+
+        // Prueba 9: el teléfono debe venir verificado por SMS. Firebase dice qué número se verificó;
+        // no se acepta ningún código de prueba.
         val telEscrito = req.telefono.filter { it.isDigit() || it == '+' }
         if (!REGEX_TELEFONO.matches(telEscrito)) {
             throw ValidacionException(listOf("El teléfono no cumple con el formato requerido"))
         }
         val telLimpio = withContext(Dispatchers.IO) {
-            if (req.smsToken.trim() == "123456" || req.smsToken.trim() == "mock_sms_token" || req.smsToken.trim() == "mock_firebase_token_dev") {
-                telEscrito
-            } else {
-                firebaseTokenVerifier.verificarTelefono(req.smsToken)
-            }
+            firebaseTokenVerifier.verificarTelefono(req.smsToken.trim())
         } ?: throw NoAutorizadoException("La verificación por SMS no es válida o ya expiró")
         if (soloDigitos(telLimpio) != soloDigitos(telEscrito)) {
             throw ValidacionException(listOf("El número que verificaste por SMS no coincide con el que escribiste"))
@@ -165,17 +169,20 @@ class UsuarioService(
             throw ConflictoException("El correo, teléfono o ID de Google ya se encuentran registrados")
         }
 
-        // Crear cuenta sin contraseña (contrasenaHash = null)
+        // Crear cuenta sin contraseña (contrasenaHash = null). Google ya verificó el correo
+        // y el teléfono se verificó por SMS: la cuenta nace verificada.
         val id = repositorio.crear(
             NuevoUsuario(
-                nombre = req.nombre.trim(),
-                primerApellido = req.apellidos.trim(),
-                segundoApellido = null,
+                nombre = nombre,
+                primerApellido = primerApellido,
+                segundoApellido = segundoApellido,
                 correo = proofData.email,
                 telefono = telLimpio,
                 contrasenaHash = null,
                 googleId = proofData.googleId,
-                rol = Roles.COMPRADOR
+                rol = Roles.COMPRADOR,
+                correoVerificado = true,
+                telefonoVerificado = true
             )
         )
 
@@ -214,11 +221,7 @@ class UsuarioService(
 
         // El SMS: Firebase dice qué número se verificó, y debe ser el mismo que escribió el usuario
         val telefonoVerificado = withContext(Dispatchers.IO) {
-            if (req.tokenFirebase.trim() == "123456" || req.tokenFirebase.trim() == "mock_sms_token" || req.tokenFirebase.trim() == "token_fcm_dev_mock") {
-                req.telefono
-            } else {
-                firebaseTokenVerifier.verificarTelefono(req.tokenFirebase)
-            }
+            firebaseTokenVerifier.verificarTelefono(req.tokenFirebase.trim())
         } ?: throw ValidacionException(listOf("La verificación por SMS no es válida o ya expiró. Vuelve a intentarlo"))
         if (soloDigitos(telefonoVerificado) != soloDigitos(req.telefono)) {
             throw ValidacionException(listOf("El número que verificaste por SMS no coincide con el que escribiste"))

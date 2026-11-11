@@ -48,9 +48,7 @@ class FirebaseTokenVerifier(private val projectId: String = "nearhouse-70367") {
      * Revisa el token que manda la app después de confirmar el código del SMS.
      */
     fun verificarTelefono(idToken: String): String? {
-        if (idToken.trim() == "123456" || idToken.trim() == "mock_sms_token" || idToken.trim() == "mock_firebase_token_dev") {
-            return "mock_verified"
-        }
+        // Solo vale un token real de Firebase: no hay códigos de prueba
         return try {
             val token = verificarFirma(idToken.trim())
             token.getClaim("phone_number").asString()?.takeIf { it.isNotBlank() }
