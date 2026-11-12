@@ -109,22 +109,22 @@ fun Route.publicacionRoutes(service: PublicacionService) {
                 call.respond(service.rechazar(call.usuarioRol(), call.usuarioId(), call.idDeRuta(), req.motivo))
             }
 
-            // DELETE /api/v1/admin/publicaciones/{id} -> elimina cualquier anuncio (botón Eliminar del administrador)
-            delete("/{id}") {
-                service.eliminarComoAdmin(call.usuarioRol(), call.idDeRuta())
-                call.respond(HttpStatusCode.NoContent)
-            }
-
-            // POST /api/v1/admin/publicaciones/{id}/desactivar  {"motivo": "..."}
+            // POST /api/v1/admin/publicaciones/{id}/desactivar  {"motivo": "..."} -> oculta el anuncio
             post("/{id}/desactivar") {
                 val req = call.recibir<MotivoRequest>()
                 service.desactivarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta(), req.motivo)
                 call.respond(HttpStatusCode.NoContent)
             }
 
-            // POST /api/v1/admin/publicaciones/{id}/reactivar
+            // POST /api/v1/admin/publicaciones/{id}/reactivar -> vuelve a mostrar el anuncio
             post("/{id}/reactivar") {
                 service.reactivarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta())
+                call.respond(HttpStatusCode.NoContent)
+            }
+
+            // DELETE /api/v1/admin/publicaciones/{id} -> elimina cualquier anuncio (204 sin cuerpo)
+            delete("/{id}") {
+                service.eliminarComoAdmin(call.usuarioRol(), call.idDeRuta())
                 call.respond(HttpStatusCode.NoContent)
             }
         }

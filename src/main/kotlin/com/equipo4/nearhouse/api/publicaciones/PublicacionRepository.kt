@@ -189,6 +189,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
+    /** Pausa (false) o reactiva (true) el anuncio del propio vendedor. */
     suspend fun cambiarActiva(id: Int, usuarioId: Int, activa: Boolean): Boolean =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { conn ->
@@ -206,6 +207,57 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     ps.setInt(3, id)
                     ps.setInt(4, usuarioId)
                     ps.executeUpdate() > 0
+                }
+            }
+        }
+
+    /** Desactiva (activa = false) o reactiva (activa = true) como administrador, y registra el cambio en el historial. */
+    suspend fun cambiarActivaAdmin(id: Int, revisorId: Int, activa: Boolean, motivo: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            dataSource.connection.use { conn ->
+                conn.autoCommit = false
+                try {
+                    val filas = conn.prepareStatement(
+                        """
+                        UPDATE publicacion
+                        SET b_desactivada_admin_publicacion = ?,
+                            t_motivo_desactivacion_publicacion = ?,
+                            fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
+                            fke_id_usuario_actualizacion = ?
+                        WHERE pke_id_publicacion = ? AND t_estado_publicacion = 'PUBLICADA'
+                        """
+                    ).use { ps ->
+                        ps.setBoolean(1, !activa)          // desactivar = true, reactivar = false
+                        ps.setString(2, if (activa) null else motivo)
+                        ps.setInt(3, revisorId)
+                        ps.setInt(4, id)
+                        ps.executeUpdate()
+                    }
+                    if (filas == 0) {
+                        conn.rollback()
+                        return@use false
+                    }
+                    conn.prepareStatement(
+                        """
+                        INSERT INTO publicacion_historial
+                            (fke_id_publicacion, t_estado_anterior, t_estado_nuevo, t_motivo, fke_id_usuario)
+                        VALUES (?, ?, ?, ?, ?)
+                        """
+                    ).use { ps ->
+                        ps.setInt(1, id)
+                        ps.setString(2, if (activa) "DESACTIVADA" else "PUBLICADA")
+                        ps.setString(3, if (activa) "REACTIVADA" else "DESACTIVADA")
+                        ps.setString(4, motivo)
+                        ps.setInt(5, revisorId)
+                        ps.executeUpdate()
+                    }
+                    conn.commit()
+                    true
+                } catch (e: Exception) {
+                    conn.rollback()
+                    throw e
+                } finally {
+                    conn.autoCommit = true
                 }
             }
         }
@@ -379,6 +431,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
             tipo = tipo,
             estado = getString("t_estado_publicacion"),
             activa = getBoolean("b_estatus_publicacion"),
+            desactivadaPorAdmin = getBoolean("desactivada_admin"),
+            motivoDesactivacion = getString("motivo_desactivacion"),
             calle = getString("t_calle_propiedad"),
             numero = getString("t_numero_propiedad"),
             colonia = getString("t_nombre_colonia"),
@@ -573,61 +627,14 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
-    /** Desactiva o reactiva como administrador. Regresa false si el estado no permite el cambio. */
-    suspend fun cambiarActivaAdmin(id: Int, revisorId: Int, activa: Boolean, motivo: String?): Boolean =
-        withContext(Dispatchers.IO) {
-            dataSource.connection.use { conn ->
-                conn.autoCommit = false
-                try {
-                    val filas = conn.prepareStatement(
-                        """
-                        UPDATE publicacion
-                        SET b_estatus_publicacion = ?,
-                            fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
-                            fke_id_usuario_actualizacion = ?
-                        WHERE pke_id_publicacion = ? AND t_estado_publicacion = 'PUBLICADA'
-                        """
-                    ).use { ps ->
-                        ps.setBoolean(1, activa)
-                        ps.setInt(2, revisorId)
-                        ps.setInt(3, id)
-                        ps.executeUpdate()
-                    }
-                    if (filas == 0) {
-                        conn.rollback()
-                        return@use false
-                    }
-                    conn.prepareStatement(
-                        """
-                        INSERT INTO publicacion_historial
-                            (fke_id_publicacion, t_estado_anterior, t_estado_nuevo, t_motivo, fke_id_usuario)
-                        VALUES (?, ?, ?, ?, ?)
-                        """
-                    ).use { ps ->
-                        ps.setInt(1, id)
-                        ps.setString(2, if (activa) "DESACTIVADA" else "PUBLICADA")
-                        ps.setString(3, if (activa) "REACTIVADA" else "DESACTIVADA")
-                        ps.setString(4, motivo)
-                        ps.setInt(5, revisorId)
-                        ps.executeUpdate()
-                    }
-                    conn.commit()
-                    true
-                } catch (e: Exception) {
-                    conn.rollback()
-                    throw e
-                } finally {
-                    conn.autoCommit = true
-                }
-            }
-        }
-
     private companion object {
         const val SELECT_PUBLICACION = """
             SELECT p.pke_id_publicacion, p.fke_id_usuario, p.t_nombre_publicacion, p.t_descripcion_publicacion,
                    p.t_reglas_publicacion, p.e_precio_publicacion, p.fh_fecha_publicacion,
                    p.t_estado_publicacion, p.b_estatus_publicacion, p.t_motivo_rechazo_publicacion,
                    p.fh_fecha_revision_publicacion,
+                   p.b_desactivada_admin_publicacion AS desactivada_admin,
+                   p.t_motivo_desactivacion_publicacion AS motivo_desactivacion,
                    m.t_nombre_modalidad,
                    pr.t_tipo_propiedad, pr.t_calle_propiedad, pr.t_numero_propiedad,
                    pr.n_latitud_propiedad, pr.n_longitud_propiedad, pr.e_superficie_propiedad,
@@ -664,4 +671,3 @@ class PublicacionRepository(private val dataSource: DataSource) {
 }
 
 data class EstadoPublicador(val rol: String, val planVigente: Boolean, val cuentaActiva: Boolean)
-
