@@ -63,6 +63,11 @@ fun Route.publicacionRoutes(service: PublicacionService) {
             call.respond(service.listarMias(call.usuarioId()))
         }
 
+        // GET /api/v1/publicaciones/cupo -> anuncios activos, límite del plan y si puede crear otro
+        get("/publicaciones/cupo") {
+            call.respond(service.cupo(call.usuarioId()))
+        }
+
         // GET /api/v1/publicaciones/{id} -> un anuncio con los datos de contacto del vendedor
         get("/publicaciones/{id}") {
             call.respond(service.obtener(call.idDeRuta(), call.usuarioId(), call.usuarioRol(), call.usuarioIdOrNull()))
