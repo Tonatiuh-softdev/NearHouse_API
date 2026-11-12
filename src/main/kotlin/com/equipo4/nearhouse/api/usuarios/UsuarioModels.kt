@@ -14,10 +14,11 @@ data class GoogleAuthRequest(
 @Serializable
 data class GoogleRegisterRequest(
     val nombre: String,
-    val apellidos: String,
+    val apellidos: String,               // primer apellido
     val telefono: String,
     val googleProofToken: String,
-    val smsToken: String
+    val smsToken: String,                // token de Firebase después de verificar el SMS
+    val segundoApellido: String? = null
 )
 
 @Serializable
@@ -121,6 +122,24 @@ data class VerificarCodigoRecuperarResponse(
 data class NuevaContrasenaRecuperarRequest(
     val comprobante: String,
     val contrasenaNueva: String
+)
+
+@Serializable
+data class ValidarCambioTelefonoRequest(
+    val telefonoNuevo: String,
+    val contrasena: String? = null,
+    val googleToken: String? = null
+)
+
+@Serializable
+data class ValidarCambioTelefonoResponse(
+    val comprobante: String
+)
+
+@Serializable
+data class CambiarTelefonoRequest(
+    val comprobante: String,
+    val tokenFirebase: String
 )
 
 /** PATCH /usuarios/me: solo se pueden cambiar nombre y apellidos. */

@@ -163,6 +163,20 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             call.respond(HttpStatusCode.OK, respuesta)
         }
 
+        // POST /api/v1/usuarios/me/telefono/validar -> Valida datos de teléfono nuevo e identidad
+        post("/usuarios/me/telefono/validar") {
+            val req = call.recibir<ValidarCambioTelefonoRequest>()
+            val respuesta = service.validarCambioTelefono(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK, respuesta)
+        }
+
+        // PUT /api/v1/usuarios/me/telefono -> Guarda el teléfono nuevo verificado con Firebase SMS
+        put("/usuarios/me/telefono") {
+            val req = call.recibir<CambiarTelefonoRequest>()
+            val respuesta = service.cambiarTelefono(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK, respuesta)
+        }
+
         // PUT /api/v1/usuarios/me/foto -> sube la foto (multipart, campo "foto")
         put("/usuarios/me/foto") {
             val bytes = call.recibirFoto()

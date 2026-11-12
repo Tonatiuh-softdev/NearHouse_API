@@ -25,12 +25,16 @@ class ReporteRepository(private val dataSource: DataSource) {
         dataSource.connection.use { conn ->
             conn.prepareStatement(
                 """
-                SELECT fke_id_usuario FROM vw_publicacion_visible
-                WHERE pke_id_publicacion = ?
+                SELECT v.fke_id_usuario, p.t_nombre_publicacion
+                FROM vw_publicacion_visible v
+                JOIN publicacion p ON p.pke_id_publicacion = v.pke_id_publicacion
+                WHERE v.pke_id_publicacion = ?
                 """.trimIndent()
             ).use { ps ->
                 ps.setInt(1, publicacionId)
-                ps.executeQuery().use { rs -> if (rs.next()) PublicacionVisible(rs.getInt(1)) else null }
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) PublicacionVisible(rs.getInt(1), rs.getString(2)) else null
+                }
             }
         }
     }
@@ -182,6 +186,34 @@ class ReporteRepository(private val dataSource: DataSource) {
                 ps.setInt(1, id)
                 ps.executeQuery().use { rs ->
                     if (rs.next()) FotoGuardada(rs.getBytes(1), rs.getString(2)) else null
+                }
+            }
+        }
+    }
+
+    /** Quién reportó, de quién es la publicación y su título: lo que hace falta para avisar al resolver. */
+    suspend fun datosParaAviso(reporteId: Int): AvisoReporte? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(
+                """
+                SELECT r.fke_id_usuario_registro, p.fke_id_usuario, p.pke_id_publicacion, p.t_nombre_publicacion
+                FROM reporte r
+                JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
+                WHERE r.pke_id_reporte = ?
+                """.trimIndent()
+            ).use { ps ->
+                ps.setInt(1, reporteId)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) {
+                        AvisoReporte(
+                            reportanteId = rs.getInt(1).let { if (rs.wasNull()) null else it },
+                            duenoId = rs.getInt(2),
+                            publicacionId = rs.getInt(3),
+                            titulo = rs.getString(4)
+                        )
+                    } else {
+                        null
+                    }
                 }
             }
         }

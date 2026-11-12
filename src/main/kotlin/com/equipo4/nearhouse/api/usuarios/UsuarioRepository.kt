@@ -140,6 +140,28 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Actualiza el teléfono del usuario y marca b_telefono_verificado_usuario = TRUE. */
+    suspend fun actualizarTelefono(idUsuario: Int, telefonoNuevo: String): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET t_telefono_usuario = ?,
+                    b_telefono_verificado_usuario = TRUE,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, telefonoNuevo)
+                ps.setInt(2, idUsuario)
+                try {
+                    ps.executeUpdate() > 0
+                } catch (e: SQLException) {
+                    throw traducirError(e)
+                }
+            }
+        }
+    }
+
     /** Desactiva la cuenta guardando la fecha actual e incrementando la versión de sesión. */
     suspend fun desactivarCuenta(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->

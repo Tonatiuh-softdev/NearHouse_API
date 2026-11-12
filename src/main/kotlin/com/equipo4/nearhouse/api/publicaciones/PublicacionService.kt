@@ -4,27 +4,27 @@ import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
+import com.equipo4.nearhouse.api.common.PlanRequeridoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
 import com.equipo4.nearhouse.api.common.ValidacionException
+import com.equipo4.nearhouse.api.notificaciones.NotificacionService
+import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import kotlinx.serialization.json.Json
 
 /**
- * Reglas de negocio de publicaciones: quién puede publicar y que los datos y las fotos sean válidos.
- * Las reglas coinciden con las restricciones de la base de datos (migración 02).
+ * Reglas de negocio de publicaciones: quién puede publicar, qué puede cambiar cada rol
+ * y que los datos y las fotos sean válidos. Las reglas coinciden con las restricciones
+ * de la base de datos (migraciones 02 y 12 y 13).
  */
-class PublicacionService(private val repositorio: PublicacionRepository) {
+class PublicacionService(
+    private val repositorio: PublicacionRepository,
+    private val notificaciones: NotificacionService,
+) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun crear(
-        usuarioId: Int,
-        rol: String,
-        datosJson: String?,
-        fotos: List<ByteArray>
-    ): PublicacionCreadaResponse {
-        if (rol !in ROLES_PUBLICADORES) {
-            throw ProhibidoException("Solo vendedores y administradores pueden publicar anuncios")
-        }
+    suspend fun crear(usuarioId: Int, datosJson: String?, fotos: List<ByteArray>): PublicacionCreadaResponse {
+        exigirPlanPublicador(usuarioId)
 
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
@@ -32,23 +32,26 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         val fotosValidas = validarFotos(fotos, errores)
         if (errores.isNotEmpty()) throw ValidacionException(errores)
 
-        return repositorio.crear(usuarioId, publicacion, fotosValidas)
+        val creada = repositorio.crear(usuarioId, publicacion, fotosValidas)
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.PUBLICACION_EN_REVISION,
+            mapOf("titulo" to publicacion.titulo),
+            idPublicacion = creada.id,
+        )
+        return creada
     }
 
     // ---------- Consultas ----------
 
-    /** Anuncios publicados y activos: lo que muestra el home. */
-    suspend fun listarPublicas(): List<PublicacionResponse> = repositorio.listar(soloPublicadas = true, estado = null)
+    suspend fun listarPublicas(usuarioLogueadoId: Int? = null): List<PublicacionResponse> =
+        repositorio.listar(soloPublicadas = true, estado = null, usuarioVendedorId = null, usuarioLogueadoId = usuarioLogueadoId)
 
-    /** Mis anuncios: todos los del usuario, en cualquier estado (en revisión, publicados o rechazados). */
     suspend fun listarMias(usuarioId: Int): List<PublicacionResponse> =
-        repositorio.listar(soloPublicadas = false, estado = null, usuarioId = usuarioId)
+        repositorio.listar(soloPublicadas = false, estado = null, usuarioVendedorId = usuarioId, usuarioLogueadoId = usuarioId)
 
-    /** Un anuncio. Los no publicados solo los ve su dueño o un administrador. */
-    suspend fun obtener(id: Int, usuarioId: Int, rol: String): PublicacionResponse {
-        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
-        // El dueño y los administradores siempre lo ven; los demás, solo si es público
-        // (publicado, activo y de una cuenta que no está desactivada ni por eliminarse)
+    suspend fun obtener(id: Int, usuarioId: Int, rol: String, usuarioLogueadoId: Int? = null): PublicacionResponse {
+        val anuncio = repositorio.buscarPorId(id, usuarioLogueadoId ?: usuarioId) ?: throw NoEncontradoException("El anuncio no existe")
         val visible = anuncio.vendedor.id == usuarioId || rol in ROLES_ADMIN || repositorio.esVisible(id)
         if (!visible) throw NoEncontradoException("El anuncio no existe")
         return anuncio
@@ -59,40 +62,46 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
 
     // ---------- Acciones del vendedor sobre sus anuncios ----------
 
-    /** El anuncio, solo si existe y es del usuario. Si es de otro se responde "no existe" para no revelar que está. */
     private suspend fun propio(id: Int, usuarioId: Int): PublicacionResponse {
         val anuncio = repositorio.buscarPorId(id)
         if (anuncio == null || anuncio.vendedor.id != usuarioId) throw NoEncontradoException("El anuncio no existe")
         return anuncio
     }
 
-    /** Pausar (activa = false) o reactivar un anuncio ya publicado. */
+    /**
+     * Pausar (activa = false) no requiere plan. Reactivar (activa = true) requiere plan vigente,
+     * y nunca se puede si la desactivó un administrador.
+     */
     suspend fun cambiarActiva(usuarioId: Int, id: Int, activa: Boolean): PublicacionResponse {
         val anuncio = propio(id, usuarioId)
         if (anuncio.estado != ESTADO_PUBLICADA) {
             throw ConflictoException("Solo se puede pausar o reactivar un anuncio que ya fue publicado")
         }
+        if (activa && anuncio.desactivadaPorAdmin) {
+            throw ProhibidoException("Este anuncio fue desactivado por un administrador. Solo un administrador puede reactivarlo.")
+        }
+        if (activa) exigirPlanPublicador(usuarioId)
         repositorio.cambiarActiva(id, usuarioId, activa)
         return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
     }
 
-    /** Elimina el anuncio de forma permanente (con sus fotos y reportes). */
+    /** Eliminar no requiere plan: cualquier dueño puede borrar sus anuncios. */
     suspend fun eliminar(usuarioId: Int, id: Int) {
         propio(id, usuarioId)
         repositorio.eliminar(id, usuarioId)
     }
 
-    /**
-     * Edita un anuncio propio: reemplaza sus datos, quita las fotos indicadas y agrega las nuevas.
-     * Queda otra vez EN_REVISION (y deja de verse en el home hasta que lo aprueben).
-     */
     suspend fun editar(usuarioId: Int, id: Int, datosJson: String?, fotosNuevas: List<ByteArray>): PublicacionResponse {
+        exigirPlanPublicador(usuarioId)
+
         val actual = propio(id, usuarioId)
+        if (actual.desactivadaPorAdmin) {
+            throw ProhibidoException("Este anuncio fue desactivado por un administrador y no se puede editar.")
+        }
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
         val publicacion = validarDatos(req, errores)
 
-        // Si se reemplaza la portada, la actual (la primera de la lista) también se quita
         val eliminar = (req.fotosEliminar +
             if (req.reemplazaPortada) listOfNotNull(actual.fotos.firstOrNull()) else emptyList()).distinct()
         if (eliminar.any { it !in actual.fotos }) errores += "Alguna foto a quitar no pertenece a este anuncio"
@@ -104,7 +113,14 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         if (errores.isNotEmpty()) throw ValidacionException(errores)
 
         repositorio.editar(id, usuarioId, publicacion, eliminar, req.reemplazaPortada, nuevas)
-        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val editada = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.PUBLICACION_EN_REVISION,
+            mapOf("titulo" to editada.titulo),
+            idPublicacion = id,
+        )
+        return editada
     }
 
     // ---------- Administrador ----------
@@ -121,7 +137,14 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
     suspend fun aprobar(rol: String, revisorId: Int, id: Int): PublicacionResponse {
         exigirAdmin(rol)
         revisar(id, revisorId, ESTADO_PUBLICADA, null)
-        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        notificaciones.notificar(
+            anuncio.vendedor.id,
+            TipoNotificacion.PUBLICACION_APROBADA,
+            mapOf("titulo" to anuncio.titulo),
+            idPublicacion = id,
+        )
+        return anuncio
     }
 
     suspend fun rechazar(rol: String, revisorId: Int, id: Int, motivo: String): PublicacionResponse {
@@ -131,7 +154,55 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
             throw ValidacionException(listOf("El motivo debe tener entre $MIN_MOTIVO y $MAX_MOTIVO caracteres"))
         }
         revisar(id, revisorId, ESTADO_RECHAZADA, limpio)
-        return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        notificaciones.notificar(
+            anuncio.vendedor.id,
+            TipoNotificacion.PUBLICACION_RECHAZADA,
+            mapOf("titulo" to anuncio.titulo, "motivo" to limpio),
+            idPublicacion = id,
+        )
+        return anuncio
+    }
+
+    /** Desactiva un anuncio publicado. El motivo es obligatorio y queda en el historial. */
+    suspend fun desactivarComoAdmin(rol: String, revisorId: Int, id: Int, motivo: String) {
+        exigirAdmin(rol)
+        val limpio = motivo.trim()
+        if (limpio.length < MIN_MOTIVO_DESACTIVAR) {
+            throw ValidacionException(listOf("El motivo debe tener al menos $MIN_MOTIVO_DESACTIVAR caracteres"))
+        }
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        if (anuncio.desactivadaPorAdmin) {
+            throw ConflictoException("Este anuncio ya está desactivado")
+        }
+        if (!repositorio.cambiarActivaAdmin(id, revisorId, activa = false, motivo = limpio)) {
+            throw ConflictoException("Solo se puede desactivar un anuncio publicado")
+        }
+        notificaciones.notificar(
+            anuncio.vendedor.id,
+            TipoNotificacion.PUBLICACION_RETIRADA,
+            mapOf("titulo" to anuncio.titulo, "motivo" to limpio),
+            idPublicacion = id,
+        )
+    }
+
+    /** Reactiva un anuncio que desactivó un administrador. */
+    suspend fun reactivarComoAdmin(rol: String, revisorId: Int, id: Int) {
+        exigirAdmin(rol)
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        if (!anuncio.desactivadaPorAdmin) {
+            throw ConflictoException("Este anuncio no está desactivado por un administrador")
+        }
+        if (!repositorio.cambiarActivaAdmin(id, revisorId, activa = true, motivo = null)) {
+            throw ConflictoException("Solo se puede reactivar un anuncio publicado")
+        }
+    }
+
+    /** Eliminar como administrador: cualquier anuncio, sin importar su estado. */
+    suspend fun eliminarComoAdmin(rol: String, id: Int) {
+        exigirAdmin(rol)
+        if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
+        repositorio.eliminarCualquiera(id)
     }
 
     private suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?) {
@@ -141,15 +212,29 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         }
     }
 
+    // ---------- Permisos ----------
+
     private fun exigirAdmin(rol: String) {
         if (rol !in ROLES_ADMIN) throw ProhibidoException("Solo los administradores pueden revisar anuncios")
+    }
+
+    /**
+     * El rol y el plan se leen de la base, no del token (el token puede estar viejo).
+     * Admin y super admin pasan sin plan. Vendedor necesita plan vigente.
+     */
+    private suspend fun exigirPlanPublicador(usuarioId: Int) {
+        val estado = repositorio.estadoPublicador(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+        if (!estado.cuentaActiva) throw ProhibidoException("Tu cuenta no está activa")
+        if (estado.rol in ROLES_ADMIN) return
+        if (estado.rol != Roles.VENDEDOR || !estado.planVigente) throw PlanRequeridoException()
     }
 
     private fun leerDatos(datosJson: String?): CrearPublicacionRequest {
         if (datosJson.isNullOrBlank()) throw CuerpoInvalidoException()
         return try {
             json.decodeFromString<CrearPublicacionRequest>(datosJson)
-        } catch (e: IllegalArgumentException) {   // incluye SerializationException
+        } catch (e: IllegalArgumentException) {
             throw CuerpoInvalidoException()
         }
     }
@@ -211,7 +296,6 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         var inmueble: DatosInmueble? = null
         var usoSuelo: String? = null
 
-        // La superficie (m²) es obligatoria en los tres tipos
         val superficie = req.superficie ?: 0
         if (superficie !in 1..MAX_SUPERFICIE) errores += "La superficie debe ser mayor que 0"
 
@@ -230,7 +314,6 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
                     piso = if (esCasa) null else req.piso.requerido("El piso", 0..99, errores),
                     niveles = if (esCasa) req.niveles.requerido("Los niveles", 1..10, errores) else null,
                     amueblado = !esCasa && req.amueblado,
-                    // Mascotas solo existe al rentar
                     mascotas = modalidad == "Renta" && req.mascotas,
                     elevador = !esCasa && req.elevador,
                     patio = esCasa && req.patio
@@ -288,7 +371,6 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
                     null
                 }
                 else -> {
-                    // Se revisan los primeros bytes: no basta con confiar en el tipo que declara el archivo
                     val tipo = detectarTipoImagen(bytes)
                     if (tipo == null) {
                         errores += "La foto $n debe ser JPEG, PNG o WebP"
@@ -312,13 +394,13 @@ class PublicacionService(private val repositorio: PublicacionRepository) {
         firma.indices.all { b[desde + it] == firma[it] }
 
     private companion object {
-        val ROLES_PUBLICADORES = setOf(Roles.VENDEDOR, Roles.ADMINISTRADOR, Roles.SUPER_ADMINISTRADOR)
         val ROLES_ADMIN = setOf(Roles.ADMINISTRADOR, Roles.SUPER_ADMINISTRADOR)
         const val ESTADO_PUBLICADA = "PUBLICADA"
         const val ESTADO_RECHAZADA = "RECHAZADA"
         val ESTADOS = setOf("EN_REVISION", ESTADO_PUBLICADA, ESTADO_RECHAZADA)
         const val MIN_MOTIVO = 10
         const val MAX_MOTIVO = 500
+        const val MIN_MOTIVO_DESACTIVAR = 5
         val TIPOS = setOf("DEPARTAMENTO", "CASA", "TERRENO")
         val USOS_SUELO = setOf("HABITACIONAL", "AGRICOLA")
         val REGEX_CODIGO_POSTAL = Regex("^[0-9]{5}$")

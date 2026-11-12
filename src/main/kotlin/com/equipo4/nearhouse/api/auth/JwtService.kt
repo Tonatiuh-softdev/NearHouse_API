@@ -97,6 +97,38 @@ class JwtService(private val config: AppConfig) {
         }
     }
 
+    /** Genera un comprobante JWT para cambio de teléfono (10 min). */
+    fun generarComprobanteTelefono(usuarioId: Int, telefonoNuevo: String): String {
+        val ahora = System.currentTimeMillis()
+        return JWT.create()
+            .withIssuer(config.jwtIssuer)
+            .withAudience(AUDIENCE_PROOF_TELEFONO)
+            .withClaim(CLAIM_ID, usuarioId)
+            .withClaim(CLAIM_TELEFONO_NUEVO, telefonoNuevo)
+            .withClaim(CLAIM_TIPO, TIPO_CAMBIO_TELEFONO)
+            .withIssuedAt(Date(ahora))
+            .withExpiresAt(Date(ahora + 10 * 60 * 1000)) // 10 minutos
+            .sign(algorithm)
+    }
+
+    /** Valida el comprobante de teléfono y regresa Pair(usuarioId, telefonoNuevo) o null si es inválido. */
+    fun obtenerComprobanteTelefono(token: String?): Pair<Int, String>? {
+        if (token.isNullOrBlank()) return null
+        return try {
+            val verifierProof = JWT.require(algorithm)
+                .withIssuer(config.jwtIssuer)
+                .withAudience(AUDIENCE_PROOF_TELEFONO)
+                .withClaim(CLAIM_TIPO, TIPO_CAMBIO_TELEFONO)
+                .build()
+            val decoded = verifierProof.verify(token)
+            val id = decoded.getClaim(CLAIM_ID).asInt()
+            val tel = decoded.getClaim(CLAIM_TELEFONO_NUEVO).asString()
+            if (id != null && tel != null) Pair(id, tel) else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** Genera un comprobante JWT firmado al verificar el código de correo. */
     fun generarComprobanteCorreo(correo: String): String {
         val ahora = System.currentTimeMillis()
@@ -127,9 +159,13 @@ class JwtService(private val config: AppConfig) {
         const val CLAIM_CORREO = "correo"
         const val CLAIM_VERSION = "ver"
         const val CLAIM_PROPOSITO = "proposito"
+        const val CLAIM_TELEFONO_NUEVO = "telefonoNuevo"
+        const val CLAIM_TIPO = "tipo"
+        const val TIPO_CAMBIO_TELEFONO = "CAMBIO_TELEFONO"
         const val PROPOSITO_CONTRASENA = "contrasena"
         const val PROPOSITO_RECUPERAR = "recuperar"
         const val AUDIENCE_PROOF_CONTRASENA = "nearhouse-proof-contrasena"
         const val AUDIENCE_PROOF_RECUPERAR = "nearhouse-proof-recuperar"
+        const val AUDIENCE_PROOF_TELEFONO = "nearhouse-proof-telefono"
     }
 }

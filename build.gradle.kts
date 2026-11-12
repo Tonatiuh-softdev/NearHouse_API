@@ -57,6 +57,9 @@ dependencies {
 
     implementation("com.auth0:java-jwt:4.4.0")
     implementation("com.auth0:jwks-rsa:0.22.1")
+
+    // Notificaciones push (Firebase Cloud Messaging)
+    implementation("com.google.firebase:firebase-admin:9.4.3")
 }
 
 // Compila para Java 21 (la versión que usan Docker y Railway)
