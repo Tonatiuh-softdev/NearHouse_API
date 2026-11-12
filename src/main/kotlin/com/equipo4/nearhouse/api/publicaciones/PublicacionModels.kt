@@ -47,6 +47,7 @@ data class CrearPublicacionRequest(
 @Serializable
 data class ActivaRequest(val activa: Boolean)
 
+/** Motivo que escribe el administrador al desactivar un anuncio. */
 @Serializable
 data class MotivoRequest(val motivo: String)
 
@@ -123,6 +124,8 @@ data class RevisionResponse(
  * Anuncio completo. Lo usan el home (solo anuncios PUBLICADA) y el administrador (todos).
  * Las fotos van como ids: la imagen se pide a GET /api/v1/fotos/{id}.
  * [superficie] solo viene en TERRENO (en casa y departamento va en la descripción).
+ * [desactivadaPorAdmin] y [motivoDesactivacion] vienen solo cuando un administrador lo desactivó;
+ * el vendedor no puede reactivarlo por su cuenta.
  */
 @Serializable
 data class PublicacionResponse(
@@ -134,7 +137,9 @@ data class PublicacionResponse(
     val modalidad: String,            // "Venta" o "Renta"
     val tipo: String,                 // DEPARTAMENTO, CASA o TERRENO
     val estado: String,               // EN_REVISION, PUBLICADA o RECHAZADA
-    val activa: Boolean,              // false = el dueño la dio de baja
+    val activa: Boolean,              // false = el dueño la pausó
+    val desactivadaPorAdmin: Boolean = false,
+    val motivoDesactivacion: String? = null,
     val calle: String,
     val numero: String,
     val colonia: String,

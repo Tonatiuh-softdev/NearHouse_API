@@ -12,8 +12,9 @@ import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import kotlinx.serialization.json.Json
 
 /**
- * Reglas de negocio de publicaciones: quién puede publicar y que los datos y las fotos sean válidos.
- * Las reglas coinciden con las restricciones de la base de datos (migración 02).
+ * Reglas de negocio de publicaciones: quién puede publicar, qué puede cambiar cada rol
+ * y que los datos y las fotos sean válidos. Las reglas coinciden con las restricciones
+ * de la base de datos (migraciones 02 y 12 y 13).
  */
 class PublicacionService(
     private val repositorio: PublicacionRepository,
@@ -67,11 +68,17 @@ class PublicacionService(
         return anuncio
     }
 
-    /** Pausar (activa = false) no requiere plan. Reactivar (activa = true) sí. */
+    /**
+     * Pausar (activa = false) no requiere plan. Reactivar (activa = true) requiere plan vigente,
+     * y nunca se puede si la desactivó un administrador.
+     */
     suspend fun cambiarActiva(usuarioId: Int, id: Int, activa: Boolean): PublicacionResponse {
         val anuncio = propio(id, usuarioId)
         if (anuncio.estado != ESTADO_PUBLICADA) {
             throw ConflictoException("Solo se puede pausar o reactivar un anuncio que ya fue publicado")
+        }
+        if (activa && anuncio.desactivadaPorAdmin) {
+            throw ProhibidoException("Este anuncio fue desactivado por un administrador. Solo un administrador puede reactivarlo.")
         }
         if (activa) exigirPlanPublicador(usuarioId)
         repositorio.cambiarActiva(id, usuarioId, activa)
@@ -88,6 +95,9 @@ class PublicacionService(
         exigirPlanPublicador(usuarioId)
 
         val actual = propio(id, usuarioId)
+        if (actual.desactivadaPorAdmin) {
+            throw ProhibidoException("Este anuncio fue desactivado por un administrador y no se puede editar.")
+        }
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
         val publicacion = validarDatos(req, errores)
@@ -154,27 +164,41 @@ class PublicacionService(
         return anuncio
     }
 
-    /** Desactivar como administrador: pide motivo, solo sobre anuncios publicados. */
+    /** Desactiva un anuncio publicado. El motivo es obligatorio y queda en el historial. */
     suspend fun desactivarComoAdmin(rol: String, revisorId: Int, id: Int, motivo: String) {
         exigirAdmin(rol)
         val limpio = motivo.trim()
-        if (limpio.length < 5) {
-            throw ValidacionException(listOf("El motivo debe tener al menos 5 caracteres"))
+        if (limpio.length < MIN_MOTIVO_DESACTIVAR) {
+            throw ValidacionException(listOf("El motivo debe tener al menos $MIN_MOTIVO_DESACTIVAR caracteres"))
+        }
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        if (anuncio.desactivadaPorAdmin) {
+            throw ConflictoException("Este anuncio ya está desactivado")
         }
         if (!repositorio.cambiarActivaAdmin(id, revisorId, activa = false, motivo = limpio)) {
             throw ConflictoException("Solo se puede desactivar un anuncio publicado")
         }
+        notificaciones.notificar(
+            anuncio.vendedor.id,
+            TipoNotificacion.PUBLICACION_RETIRADA,
+            mapOf("titulo" to anuncio.titulo, "motivo" to limpio),
+            idPublicacion = id,
+        )
     }
 
-    /** Reactivar como administrador. */
+    /** Reactiva un anuncio que desactivó un administrador. */
     suspend fun reactivarComoAdmin(rol: String, revisorId: Int, id: Int) {
         exigirAdmin(rol)
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        if (!anuncio.desactivadaPorAdmin) {
+            throw ConflictoException("Este anuncio no está desactivado por un administrador")
+        }
         if (!repositorio.cambiarActivaAdmin(id, revisorId, activa = true, motivo = null)) {
             throw ConflictoException("Solo se puede reactivar un anuncio publicado")
         }
     }
 
-    /** Botón "Eliminar" del detalle administrativo: borra cualquier anuncio, sin importar su estado. */
+    /** Eliminar como administrador: cualquier anuncio, sin importar su estado. */
     suspend fun eliminarComoAdmin(rol: String, id: Int) {
         exigirAdmin(rol)
         if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
@@ -324,6 +348,8 @@ class PublicacionService(
         return this
     }
 
+    // ---------- Fotos ----------
+
     private fun validarFotos(fotos: List<ByteArray>, errores: MutableList<String>): List<FotoNueva> {
         if (fotos.isEmpty()) {
             errores += "Agrega al menos 1 foto"
@@ -374,6 +400,7 @@ class PublicacionService(
         val ESTADOS = setOf("EN_REVISION", ESTADO_PUBLICADA, ESTADO_RECHAZADA)
         const val MIN_MOTIVO = 10
         const val MAX_MOTIVO = 500
+        const val MIN_MOTIVO_DESACTIVAR = 5
         val TIPOS = setOf("DEPARTAMENTO", "CASA", "TERRENO")
         val USOS_SUELO = setOf("HABITACIONAL", "AGRICOLA")
         val REGEX_CODIGO_POSTAL = Regex("^[0-9]{5}$")
