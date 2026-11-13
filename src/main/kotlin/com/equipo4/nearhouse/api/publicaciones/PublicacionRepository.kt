@@ -46,8 +46,9 @@ class PublicacionRepository(private val dataSource: DataSource) {
     }
 
     /**
-     * Rol, plan vigente y si la cuenta puede publicar, leídos de la base (no del token).
-     * La regla de cuenta activa es la misma que usa vw_publicacion_visible y el login.
+     * Rol, plan vigente, si la cuenta puede publicar, el límite de su plan y cuántos anuncios activos
+     * lleva, leídos de la base (no del token). La regla de cuenta activa es la misma que usa
+     * vw_publicacion_visible y el login. Activo = en revisión o publicado, y no pausado.
      */
     suspend fun estadoPublicador(usuarioId: Int): EstadoPublicador? = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
@@ -57,9 +58,16 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     COALESCE(u.fh_vencimiento_suscripcion_usuario > CURRENT_TIMESTAMP, FALSE) AS plan_vigente,
                     (u.fh_suspension_hasta_usuario IS NULL
                         OR u.fh_suspension_hasta_usuario <= CURRENT_TIMESTAMP) AS cuenta_activa,
-                    (u.fh_desactivacion_usuario IS NULL) AS no_desactivada
+                    (u.fh_desactivacion_usuario IS NULL) AS no_desactivada,
+                    s.t_nombre_suscripcion,
+                    s.e_limite_anuncios_suscripcion,
+                    (SELECT COUNT(*) FROM publicacion p
+                     WHERE p.fke_id_usuario = u.pke_id_usuario
+                       AND p.b_estatus_publicacion
+                       AND p.t_estado_publicacion IN ('EN_REVISION', 'PUBLICADA')) AS activas
                 FROM usuario u
                 JOIN rol r ON r.pke_id_rol = u.fke_id_rol
+                LEFT JOIN suscripcion s ON s.pke_id_suscripcion = u.fke_id_suscripcion
                 WHERE u.pke_id_usuario = ?
                 """
             ).use { ps ->
@@ -69,7 +77,10 @@ class PublicacionRepository(private val dataSource: DataSource) {
                         EstadoPublicador(
                             rol = rs.getString(1),
                             planVigente = rs.getBoolean(2),
-                            cuentaActiva = rs.getBoolean(3) && rs.getBoolean(4)
+                            cuentaActiva = rs.getBoolean(3) && rs.getBoolean(4),
+                            plan = rs.getString(5),
+                            limite = rs.getInt(6).let { if (rs.wasNull()) null else it },
+                            activas = rs.getInt(7)
                         )
                     } else null
                 }
@@ -467,7 +478,9 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     motivo = getString("t_motivo_rechazo_publicacion")
                 )
             },
-            guardada = guardadosSet.contains(pubId)
+            guardada = guardadosSet.contains(pubId),
+            nivelVisibilidad = getInt("nivel_visibilidad"),
+            limiteVendedor = intOrNull("limite_vendedor")
         )
     }
 
@@ -628,6 +641,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
     }
 
     private companion object {
+        // nivel_visibilidad y limite_vendedor: plan del vendedor, para el orden de Inicio y el límite
+        // de anuncios (los administradores cuentan como visibilidad estándar y sin límite).
         const val SELECT_PUBLICACION = """
             SELECT p.pke_id_publicacion, p.fke_id_usuario, p.t_nombre_publicacion, p.t_descripcion_publicacion,
                    p.t_reglas_publicacion, p.e_precio_publicacion, p.fh_fecha_publicacion,
@@ -651,6 +666,10 @@ class PublicacionRepository(private val dataSource: DataSource) {
                    u.t_telefono_usuario AS vendedor_telefono,
                    u.by_foto_usuario IS NOT NULL AS vendedor_tiene_foto,
                    (EXTRACT(EPOCH FROM u.fh_fecha_foto_usuario) * 1000)::bigint AS vendedor_foto_version,
+                   CASE WHEN rv.t_nombre_rol IN ('Administrador', 'Super Administrador') THEN 1
+                        ELSE COALESCE(sv.e_nivel_visibilidad_suscripcion, 1) END AS nivel_visibilidad,
+                   CASE WHEN rv.t_nombre_rol IN ('Administrador', 'Super Administrador') THEN NULL
+                        ELSE sv.e_limite_anuncios_suscripcion END AS limite_vendedor,
                    r.t_nombre_usuario AS revisor_nombre,
                    r.t_primer_apellido_usuario AS revisor_apellido1,
                    COALESCE(
@@ -665,9 +684,18 @@ class PublicacionRepository(private val dataSource: DataSource) {
             LEFT JOIN inmueble i ON i.fke_id_propiedad = pr.pke_id_propiedad
             LEFT JOIN terreno t ON t.fke_id_propiedad = pr.pke_id_propiedad
             JOIN usuario u ON u.pke_id_usuario = p.fke_id_usuario
+            JOIN rol rv ON rv.pke_id_rol = u.fke_id_rol
+            LEFT JOIN suscripcion sv ON sv.pke_id_suscripcion = u.fke_id_suscripcion
             LEFT JOIN usuario r ON r.pke_id_usuario = p.fke_id_usuario_revision
         """
     }
 }
 
-data class EstadoPublicador(val rol: String, val planVigente: Boolean, val cuentaActiva: Boolean)
+data class EstadoPublicador(
+    val rol: String,
+    val planVigente: Boolean,
+    val cuentaActiva: Boolean,
+    val plan: String? = null,
+    val limite: Int? = null,    // null = sin límite
+    val activas: Int = 0
+)

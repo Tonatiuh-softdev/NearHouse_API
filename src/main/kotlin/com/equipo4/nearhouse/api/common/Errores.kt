@@ -62,3 +62,7 @@ class DemasiadasSolicitudesException(mensaje: String) :
 class PlanRequeridoException(
     message: String = "Necesitas un plan activo para publicar"
 ) : ApiException(HttpStatusCode.Forbidden, message, codigo = "PLAN_REQUERIDO")
+
+/** El plan ya no tiene lugar para otro anuncio activo. La app manda a planes para elegir uno mayor. */
+class LimiteAnunciosException(message: String) :
+    ApiException(HttpStatusCode.Forbidden, message, codigo = "LIMITE_ANUNCIOS")

@@ -1,6 +1,7 @@
 package com.equipo4.nearhouse.api.publicaciones
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 /** Máximo de fotos por anuncio. Cambia solo este número si quieres otro límite. */
 const val MAX_FOTOS_ANUNCIO = 20
@@ -161,7 +162,22 @@ data class PublicacionResponse(
     val vendedor: VendedorResponse,
     val fechaRegistro: Long,
     val revision: RevisionResponse?,
-    val guardada: Boolean = false
+    val guardada: Boolean = false,
+    /** Solo en "Mis anuncios": está publicado, pero no se muestra porque excede el límite del plan. */
+    val ocultaPorLimite: Boolean = false,
+    // Datos internos para el orden de Inicio (no se mandan a la app)
+    @Transient val nivelVisibilidad: Int = 1,      // 1 Básico, 2 Profesional, 3 Premium (admin = 1)
+    @Transient val limiteVendedor: Int? = null,    // anuncios activos que permite su plan; null = sin límite
+)
+
+/** Para el botón "Crear anuncio": cuántos anuncios activos lleva y si puede crear otro. */
+@Serializable
+data class CupoResponse(
+    val plan: String?,
+    val limite: Int?,          // null = sin límite (Premium o administrador)
+    val activas: Int,
+    val puedePublicar: Boolean,
+    val codigo: String?,       // PLAN_REQUERIDO, LIMITE_ANUNCIOS o CUENTA_INACTIVA (null si puede)
 )
 
 @Serializable

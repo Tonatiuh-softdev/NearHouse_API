@@ -3,6 +3,7 @@ package com.equipo4.nearhouse.api.publicaciones
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
+import com.equipo4.nearhouse.api.common.LimiteAnunciosException
 import com.equipo4.nearhouse.api.common.NoEncontradoException
 import com.equipo4.nearhouse.api.common.PlanRequeridoException
 import com.equipo4.nearhouse.api.common.ProhibidoException
@@ -24,7 +25,7 @@ class PublicacionService(
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun crear(usuarioId: Int, datosJson: String?, fotos: List<ByteArray>): PublicacionCreadaResponse {
-        exigirPlanPublicador(usuarioId)
+        exigirCupo(exigirPlanPublicador(usuarioId))
 
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
@@ -44,11 +45,43 @@ class PublicacionService(
 
     // ---------- Consultas ----------
 
-    suspend fun listarPublicas(usuarioLogueadoId: Int? = null): List<PublicacionResponse> =
-        repositorio.listar(soloPublicadas = true, estado = null, usuarioVendedorId = null, usuarioLogueadoId = usuarioLogueadoId)
+    /**
+     * Inicio y Mapa: se quitan los anuncios que exceden el límite del plan de su vendedor y el resto
+     * se ordena según el plan (ver [RankingPublicaciones]).
+     */
+    suspend fun listarPublicas(usuarioLogueadoId: Int? = null): List<PublicacionResponse> {
+        val visibles = repositorio.listar(soloPublicadas = true, estado = null, usuarioVendedorId = null, usuarioLogueadoId = usuarioLogueadoId)
+        return RankingPublicaciones.ordenar(RankingPublicaciones.aplicarLimites(visibles), usuarioLogueadoId)
+    }
 
-    suspend fun listarMias(usuarioId: Int): List<PublicacionResponse> =
-        repositorio.listar(soloPublicadas = false, estado = null, usuarioVendedorId = usuarioId, usuarioLogueadoId = usuarioId)
+    /** Mis anuncios: se marcan los que no se muestran por exceder el límite del plan. */
+    suspend fun listarMias(usuarioId: Int): List<PublicacionResponse> {
+        val mias = repositorio.listar(soloPublicadas = false, estado = null, usuarioVendedorId = usuarioId, usuarioLogueadoId = usuarioId)
+        val ocultas = RankingPublicaciones.idsFueraDeLimite(mias)
+        return if (ocultas.isEmpty()) mias else mias.map { if (it.id in ocultas) it.copy(ocultaPorLimite = true) else it }
+    }
+
+    /** Para el botón "Crear anuncio": anuncios activos, límite del plan y si puede crear otro. */
+    suspend fun cupo(usuarioId: Int): CupoResponse {
+        val estado = repositorio.estadoPublicador(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+        val esAdmin = estado.rol in ROLES_ADMIN
+        val limite = if (esAdmin) null else estado.limite
+        val codigo = when {
+            !estado.cuentaActiva -> "CUENTA_INACTIVA"
+            esAdmin -> null
+            estado.rol != Roles.VENDEDOR || !estado.planVigente -> "PLAN_REQUERIDO"
+            limite != null && estado.activas >= limite -> "LIMITE_ANUNCIOS"
+            else -> null
+        }
+        return CupoResponse(
+            plan = if (esAdmin) null else estado.plan,
+            limite = limite,
+            activas = estado.activas,
+            puedePublicar = codigo == null,
+            codigo = codigo
+        )
+    }
 
     suspend fun obtener(id: Int, usuarioId: Int, rol: String, usuarioLogueadoId: Int? = null): PublicacionResponse {
         val anuncio = repositorio.buscarPorId(id, usuarioLogueadoId ?: usuarioId) ?: throw NoEncontradoException("El anuncio no existe")
@@ -80,7 +113,11 @@ class PublicacionService(
         if (activa && anuncio.desactivadaPorAdmin) {
             throw ProhibidoException("Este anuncio fue desactivado por un administrador. Solo un administrador puede reactivarlo.")
         }
-        if (activa) exigirPlanPublicador(usuarioId)
+        if (activa) {
+            val estado = exigirPlanPublicador(usuarioId)
+            // Reactivar ocupa un lugar del plan (si ya estaba activo, no ocupa uno nuevo)
+            if (!anuncio.activa) exigirCupo(estado)
+        }
         repositorio.cambiarActiva(id, usuarioId, activa)
         return repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
     }
@@ -92,12 +129,14 @@ class PublicacionService(
     }
 
     suspend fun editar(usuarioId: Int, id: Int, datosJson: String?, fotosNuevas: List<ByteArray>): PublicacionResponse {
-        exigirPlanPublicador(usuarioId)
+        val estadoPublicador = exigirPlanPublicador(usuarioId)
 
         val actual = propio(id, usuarioId)
         if (actual.desactivadaPorAdmin) {
             throw ProhibidoException("Este anuncio fue desactivado por un administrador y no se puede editar.")
         }
+        // Un anuncio rechazado no ocupa lugar; al corregirlo vuelve a revisión y sí lo ocupa
+        if (actual.estado == ESTADO_RECHAZADA && actual.activa) exigirCupo(estadoPublicador)
         val req = leerDatos(datosJson)
         val errores = mutableListOf<String>()
         val publicacion = validarDatos(req, errores)
@@ -222,12 +261,29 @@ class PublicacionService(
      * El rol y el plan se leen de la base, no del token (el token puede estar viejo).
      * Admin y super admin pasan sin plan. Vendedor necesita plan vigente.
      */
-    private suspend fun exigirPlanPublicador(usuarioId: Int) {
+    private suspend fun exigirPlanPublicador(usuarioId: Int): EstadoPublicador {
         val estado = repositorio.estadoPublicador(usuarioId)
             ?: throw NoEncontradoException("Usuario no encontrado")
         if (!estado.cuentaActiva) throw ProhibidoException("Tu cuenta no está activa")
-        if (estado.rol in ROLES_ADMIN) return
+        if (estado.rol in ROLES_ADMIN) return estado
         if (estado.rol != Roles.VENDEDOR || !estado.planVigente) throw PlanRequeridoException()
+        return estado
+    }
+
+    /**
+     * Revisa que el plan tenga lugar para un anuncio activo más (en revisión o publicado, no pausado).
+     * Básico: 1, Profesional: 3, Premium: sin límite. Los administradores no tienen límite.
+     */
+    private fun exigirCupo(estado: EstadoPublicador) {
+        if (estado.rol in ROLES_ADMIN) return
+        val limite = estado.limite ?: return
+        if (estado.activas >= limite) {
+            val tuPlan = estado.plan?.let { "Tu plan $it" } ?: "Tu plan"
+            val anuncios = if (limite == 1) "1 anuncio activo" else "$limite anuncios activos"
+            throw LimiteAnunciosException(
+                "$tuPlan permite $anuncios. Pausa o elimina uno, o cambia a un plan con más anuncios."
+            )
+        }
     }
 
     private fun leerDatos(datosJson: String?): CrearPublicacionRequest {
