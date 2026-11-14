@@ -34,9 +34,12 @@ private const val SQL_REPORTE_PENDIENTE = "rp.t_estado_reporte = 'PENDIENTE'"
  */
 class AdminUsuarioRepository(private val dataSource: DataSource) {
 
-    suspend fun contarTodas(): Int = withContext(Dispatchers.IO) {
+    /** Total de cuentas que puede ver quien consulta (solo los roles de [rolesVisibles]). */
+    suspend fun contarTodas(rolesVisibles: Set<RolUsuario>): Int = withContext(Dispatchers.IO) {
+        val (where, valores) = condicionRoles(rolesVisibles)
         dataSource.connection.use { conn ->
-            conn.prepareStatement("SELECT COUNT(*) FROM usuario").use { ps ->
+            conn.prepareStatement("SELECT COUNT(*) FROM usuario u JOIN rol r ON r.pke_id_rol = u.fke_id_rol WHERE $where").use { ps ->
+                ps.asignar(valores)
                 ps.executeQuery().use { rs ->
                     rs.next()
                     rs.getInt(1)
@@ -206,6 +209,12 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
         val clausulas = mutableListOf<String>()
         val valores = mutableListOf<Any>()
 
+        // Solo los roles que puede ver quien consulta
+        condicionRoles(filtros.rolesVisibles).let { (clausula, roles) ->
+            clausulas += clausula
+            valores += roles
+        }
+
         filtros.buscar?.let { texto ->
             clausulas += """
                 (LOWER(CONCAT_WS(' ', u.t_nombre_usuario, u.t_primer_apellido_usuario, u.t_segundo_apellido_usuario)) LIKE ? ESCAPE '!'
@@ -227,6 +236,14 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
         val where = if (clausulas.isEmpty()) "" else " WHERE " + clausulas.joinToString(" AND ")
         return where to valores
     }
+
+    /** "r.t_nombre_rol IN (?, ?)" con los nombres de la tabla rol. Si no hay roles, no regresa nada. */
+    private fun condicionRoles(roles: Set<RolUsuario>): Pair<String, List<Any>> =
+        if (roles.isEmpty()) {
+            "FALSE" to emptyList()
+        } else {
+            "r.t_nombre_rol IN (${roles.joinToString(", ") { "?" }})" to roles.map { it.nombreBd }
+        }
 
     /** Patrón para LIKE. Escapa % y _ para que la búsqueda los tome como texto normal. */
     private fun patronLike(texto: String): String {

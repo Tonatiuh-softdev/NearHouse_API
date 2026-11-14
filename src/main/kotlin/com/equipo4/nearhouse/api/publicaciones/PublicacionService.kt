@@ -1,5 +1,6 @@
 package com.equipo4.nearhouse.api.publicaciones
 
+import com.equipo4.nearhouse.api.apelaciones.ApelacionService
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
@@ -20,6 +21,8 @@ import kotlinx.serialization.json.Json
 class PublicacionService(
     private val repositorio: PublicacionRepository,
     private val notificaciones: NotificacionService,
+    /** Para marcar en "Mis anuncios" los retirados por un reporte y el estado de su apelación. */
+    private val apelaciones: ApelacionService? = null,
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -58,7 +61,17 @@ class PublicacionService(
     suspend fun listarMias(usuarioId: Int): List<PublicacionResponse> {
         val mias = repositorio.listar(soloPublicadas = false, estado = null, usuarioVendedorId = usuarioId, usuarioLogueadoId = usuarioId)
         val ocultas = RankingPublicaciones.idsFueraDeLimite(mias)
-        return if (ocultas.isEmpty()) mias else mias.map { if (it.id in ocultas) it.copy(ocultaPorLimite = true) else it }
+        val retiradas = apelaciones?.retiradasPorReporte(usuarioId).orEmpty()
+        if (ocultas.isEmpty() && retiradas.isEmpty()) return mias
+        return mias.map { anuncio ->
+            val apelacion = retiradas[anuncio.id]
+            anuncio.copy(
+                ocultaPorLimite = anuncio.id in ocultas,
+                retiradaPorReporte = apelacion != null,
+                apelacionEstado = apelacion?.estado,
+                apelacionNota = apelacion?.nota
+            )
+        }
     }
 
     /** Para el botón "Crear anuncio": anuncios activos, límite del plan y si puede crear otro. */
@@ -175,6 +188,7 @@ class PublicacionService(
 
     suspend fun aprobar(rol: String, revisorId: Int, id: Int): PublicacionResponse {
         exigirAdmin(rol)
+        exigirAnuncioAjeno(id, revisorId)
         revisar(id, revisorId, ESTADO_PUBLICADA, null)
         val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
         notificaciones.notificar(
@@ -192,6 +206,7 @@ class PublicacionService(
         if (limpio.length !in MIN_MOTIVO..MAX_MOTIVO) {
             throw ValidacionException(listOf("El motivo debe tener entre $MIN_MOTIVO y $MAX_MOTIVO caracteres"))
         }
+        exigirAnuncioAjeno(id, revisorId)
         revisar(id, revisorId, ESTADO_RECHAZADA, limpio)
         val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
         notificaciones.notificar(
@@ -210,7 +225,7 @@ class PublicacionService(
         if (limpio.length < MIN_MOTIVO_DESACTIVAR) {
             throw ValidacionException(listOf("El motivo debe tener al menos $MIN_MOTIVO_DESACTIVAR caracteres"))
         }
-        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val anuncio = exigirAnuncioAjeno(id, revisorId)
         if (anuncio.desactivadaPorAdmin) {
             throw ConflictoException("Este anuncio ya está desactivado")
         }
@@ -228,7 +243,7 @@ class PublicacionService(
     /** Reactiva un anuncio que desactivó un administrador. */
     suspend fun reactivarComoAdmin(rol: String, revisorId: Int, id: Int) {
         exigirAdmin(rol)
-        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val anuncio = exigirAnuncioAjeno(id, revisorId)
         if (!anuncio.desactivadaPorAdmin) {
             throw ConflictoException("Este anuncio no está desactivado por un administrador")
         }
@@ -255,6 +270,15 @@ class PublicacionService(
 
     private fun exigirAdmin(rol: String) {
         if (rol !in ROLES_ADMIN) throw ProhibidoException("Solo los administradores pueden revisar anuncios")
+    }
+
+    /** Un administrador no aprueba, rechaza ni modera sus propios anuncios: lo hace otro administrador. */
+    private suspend fun exigirAnuncioAjeno(id: Int, revisorId: Int): PublicacionResponse {
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        if (anuncio.vendedor.id == revisorId) {
+            throw ProhibidoException("No puedes revisar tu propio anuncio. Lo debe revisar otro administrador")
+        }
+        return anuncio
     }
 
     /**

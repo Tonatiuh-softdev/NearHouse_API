@@ -156,6 +156,45 @@ object PlantillasCorreo {
         texto = "Tu cuenta de NearHouse y tus anuncios se eliminaron. Gracias por usar NearHouse.",
     )
 
+    /**
+     * Resultado de la apelación de una suspensión. La cuenta suspendida no puede entrar a ver sus avisos,
+     * por eso también se le avisa por correo. [nota] es la respuesta del administrador.
+     */
+    fun apelacionResuelta(para: String, aceptada: Boolean, nota: String): MensajeCorreo {
+        val notaHtml = escaparHtml(nota)
+        return if (aceptada) {
+            MensajeCorreo(
+                para = para,
+                asunto = "Revisamos tu apelación: tu cuenta de NearHouse está activa",
+                html = diseno(
+                    "Tu cuenta está activa otra vez",
+                    "<p>Revisamos tu apelación y quitamos la suspensión de tu cuenta. Ya puedes iniciar sesión en NearHouse.</p>" +
+                        "<p><b>Respuesta del administrador:</b> $notaHtml</p>",
+                ),
+                texto = "Revisamos tu apelación y quitamos la suspensión de tu cuenta. Ya puedes iniciar sesión en NearHouse. " +
+                    "Respuesta del administrador: $nota",
+            )
+        } else {
+            MensajeCorreo(
+                para = para,
+                asunto = "Revisamos tu apelación de NearHouse",
+                html = diseno(
+                    "Revisamos tu apelación",
+                    "<p>Revisamos tu apelación y la suspensión de tu cuenta se mantiene.</p>" +
+                        "<p><b>Respuesta del administrador:</b> $notaHtml</p>",
+                ),
+                texto = "Revisamos tu apelación y la suspensión de tu cuenta se mantiene. Respuesta del administrador: $nota",
+            )
+        }
+    }
+
+    /** Para meter texto escrito por una persona dentro del HTML del correo sin que se interprete como etiquetas. */
+    private fun escaparHtml(texto: String) = texto
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+
     /** El marco que comparten todos los correos (letra, ancho y título). */
     private fun diseno(titulo: String, contenido: String) =
         "<div style=\"font-family: Arial, sans-serif; max-width: 480px; margin: auto; color: #222;\">" +

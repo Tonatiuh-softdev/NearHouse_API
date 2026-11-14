@@ -1,5 +1,6 @@
 package com.equipo4.nearhouse.api.usuarios
 
+import com.equipo4.nearhouse.api.apelaciones.ApelacionService
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
 import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
@@ -51,6 +52,8 @@ class UsuarioService(
     private val codigos: CodigosCorreo,
     private val enviador: EnviadorCorreo,
     private val notificaciones: NotificacionService,
+    /** Para que una cuenta suspendida reciba el motivo y pueda apelar desde el inicio de sesión. */
+    private val apelaciones: ApelacionService? = null,
 ) {
 
     private val logger = LoggerFactory.getLogger(UsuarioService::class.java)
@@ -134,7 +137,8 @@ class UsuarioService(
             val usuarioActualizado = repositorio.buscarPorId(usuarioExistente.id)!!
 
             if (!usuarioActualizado.activo) {
-                throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
+                throw apelaciones?.errorDeSuspension(usuarioActualizado.id)
+                    ?: ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
             }
 
             if (usuarioActualizado.fechaDesactivacion != null) {
@@ -324,8 +328,10 @@ class UsuarioService(
 
         LoginAttemptTracker.limpiar(correo)
 
+        // La contraseña ya se verificó: se puede dar el comprobante para apelar
         if (!usuario.activo) {
-            throw ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
+            throw apelaciones?.errorDeSuspension(usuario.id)
+                ?: ProhibidoException("Tu cuenta está suspendida. Contacta al administrador")
         }
 
         if (usuario.fechaDesactivacion != null) {

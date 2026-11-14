@@ -1,5 +1,6 @@
 package com.equipo4.nearhouse.api.plugins
 
+import com.equipo4.nearhouse.api.apelaciones.CuentaSuspendidaException
 import com.equipo4.nearhouse.api.common.ApiException
 import com.equipo4.nearhouse.api.common.ErrorResponse
 import io.ktor.http.HttpStatusCode
@@ -16,6 +17,10 @@ import io.ktor.server.response.respond
  */
 fun Application.configureStatusPages() {
     install(StatusPages) {
+        // Cuenta suspendida: además del mensaje, el motivo, hasta cuándo y lo necesario para apelar
+        exception<CuentaSuspendidaException> { call, cause ->
+            call.respond(cause.status, cause.toResponse())
+        }
         exception<ApiException> { call, cause ->
             call.respond(cause.status, ErrorResponse(cause.message, cause.detalles, cause.codigo))
         }

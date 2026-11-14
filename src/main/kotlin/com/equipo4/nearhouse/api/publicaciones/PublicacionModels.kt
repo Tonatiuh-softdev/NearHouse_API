@@ -165,6 +165,12 @@ data class PublicacionResponse(
     val guardada: Boolean = false,
     /** Solo en "Mis anuncios": está publicado, pero no se muestra porque excede el límite del plan. */
     val ocultaPorLimite: Boolean = false,
+    /** Solo en "Mis anuncios": un administrador lo retiró por un reporte (se puede apelar una vez). */
+    val retiradaPorReporte: Boolean = false,
+    /** Apelación de ese retiro: null (todavía no apela), PENDIENTE o RECHAZADA. */
+    val apelacionEstado: String? = null,
+    /** Respuesta del administrador cuando la apelación se rechazó. */
+    val apelacionNota: String? = null,
     // Datos internos para el orden de Inicio (no se mandan a la app)
     @Transient val nivelVisibilidad: Int = 1,      // 1 Básico, 2 Profesional, 3 Premium (admin = 1)
     @Transient val limiteVendedor: Int? = null,    // anuncios activos que permite su plan; null = sin límite

@@ -1,6 +1,9 @@
 package com.equipo4.nearhouse.api
 
 import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioRepository
+import com.equipo4.nearhouse.api.apelaciones.ApelacionRepository
+import com.equipo4.nearhouse.api.apelaciones.ApelacionService
+import com.equipo4.nearhouse.api.apelaciones.ApelacionTokens
 import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 import com.equipo4.nearhouse.api.auth.FirebaseTokenVerifier
 import com.equipo4.nearhouse.api.auth.GoogleProofService
@@ -98,6 +101,14 @@ fun Application.module(config: AppConfig) {
 
     val usuarioRepository = UsuarioRepository(dataSource)
 
+    // Apelaciones: anuncios retirados por un reporte y cuentas suspendidas
+    val apelacionService = ApelacionService(
+        ApelacionRepository(dataSource),
+        notificacionService,
+        enviadorCorreo,
+        ApelacionTokens(config.jwtSecret),
+    )
+
     val usuarioService = UsuarioService(
         repositorio = usuarioRepository,
         jwtService = jwtService,
@@ -106,6 +117,7 @@ fun Application.module(config: AppConfig) {
         codigos = codigosCorreo,
         enviador = enviadorCorreo,
         notificaciones = notificacionService,
+        apelaciones = apelacionService,
     )
 
     // Limpieza diaria: notificaciones antiguas.
@@ -127,7 +139,7 @@ fun Application.module(config: AppConfig) {
 
     // Crear anuncios (con fotos)
     val publicacionRepository = PublicacionRepository(dataSource)
-    val publicacionService = PublicacionService(publicacionRepository, notificacionService)
+    val publicacionService = PublicacionService(publicacionRepository, notificacionService, apelacionService)
 
     // Reportes de publicaciones
     val reporteService = ReporteService(ReporteRepository(dataSource), notificacionService)
@@ -154,5 +166,6 @@ fun Application.module(config: AppConfig) {
         notificacionService,
         dispositivoService,
         guardadoService,
+        apelacionService,
     )
 }

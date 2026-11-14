@@ -8,7 +8,13 @@ import com.equipo4.nearhouse.api.common.ValidacionException
 import com.equipo4.nearhouse.api.usuarios.FotoPerfil
 
 /**
- * Reglas del panel de usuarios: quién puede entrar, y que los filtros y la página sean válidos.
+ * Reglas del panel de usuarios: quién puede entrar, a quién puede ver y administrar,
+ * y que los filtros y la página sean válidos.
+ *
+ * Nadie ve ni administra cuentas de su mismo nivel (ni la suya):
+ * - Administrador: compradores y vendedores.
+ * - Superadministrador: compradores, vendedores y administradores.
+ * La cuenta del superadministrador no aparece para nadie.
  */
 class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
 
@@ -19,7 +25,7 @@ class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
         estatusTexto: String?,
         paginaTexto: String?
     ): ListaUsuariosResponse {
-        exigirAdmin(rol)
+        val visibles = rolesVisibles(rol)
 
         val errores = mutableListOf<String>()
 
@@ -50,10 +56,15 @@ class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
         }
 
         if (errores.isNotEmpty()) throw ValidacionException(errores)
+        if (rolFiltro != null && rolFiltro !in visibles) {
+            throw ProhibidoException("No puedes consultar cuentas con ese rol")
+        }
 
-        val filtros = FiltrosUsuarios(buscar = texto, rol = rolFiltro, estatus = estatusFiltro)
+        val filtros = FiltrosUsuarios(
+            buscar = texto, rol = rolFiltro, estatus = estatusFiltro, rolesVisibles = visibles
+        )
         return ListaUsuariosResponse(
-            totalCuentas = repositorio.contarTodas(),
+            totalCuentas = repositorio.contarTodas(visibles),
             totalResultados = repositorio.contarFiltradas(filtros),
             pagina = pagina,
             porPagina = POR_PAGINA,
@@ -61,9 +72,12 @@ class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
         )
     }
 
+    /** Una cuenta que no puede ver (su mismo nivel o superior) responde como si no existiera. */
     suspend fun detalle(rol: String, id: Int): UsuarioDetalleResponse {
-        exigirAdmin(rol)
-        return repositorio.detalle(id) ?: throw NoEncontradoException("El usuario no existe")
+        val visibles = rolesVisibles(rol)
+        val detalle = repositorio.detalle(id) ?: throw NoEncontradoException("El usuario no existe")
+        if (detalle.rol !in visibles) throw NoEncontradoException("El usuario no existe")
+        return detalle
     }
 
     suspend fun foto(rol: String, id: Int): FotoPerfil {
@@ -71,9 +85,9 @@ class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
         return repositorio.buscarFoto(id) ?: throw NoEncontradoException("El usuario no tiene foto de perfil")
     }
 
-    /** Suspende una cuenta. No se puede suspender a uno mismo ni a otro administrador. */
+    /** Suspende una cuenta. No se puede suspender a uno mismo ni a alguien de su mismo nivel o superior. */
     suspend fun suspender(rol: String, idAdmin: Int, idUsuario: Int, req: SuspenderUsuarioRequest) {
-        exigirAdmin(rol)
+        val visibles = rolesVisibles(rol)
         if (idAdmin == idUsuario) throw ProhibidoException("No puedes suspender tu propia cuenta")
 
         val motivo = req.motivo.trim()
@@ -83,32 +97,45 @@ class AdminUsuarioService(private val repositorio: AdminUsuarioRepository) {
         if (errores.isNotEmpty()) throw ValidacionException(errores)
 
         val objetivo = repositorio.estatusDe(idUsuario) ?: throw NoEncontradoException("El usuario no existe")
+        exigirAdministrable(visibles, idUsuario)
         if (objetivo == "SUSPENDIDO") throw ConflictoException("Esta cuenta ya está suspendida")
-        if (repositorio.rolDe(idUsuario) in ROLES_ADMIN) {
-            throw ProhibidoException("No puedes suspender a otro administrador")
-        }
 
         repositorio.suspender(idAdmin, idUsuario, req.dias, motivo)
     }
 
     /** Quita la suspensión de una cuenta. */
     suspend fun levantarSuspension(rol: String, idUsuario: Int) {
-        exigirAdmin(rol)
+        val visibles = rolesVisibles(rol)
         val objetivo = repositorio.estatusDe(idUsuario) ?: throw NoEncontradoException("El usuario no existe")
+        exigirAdministrable(visibles, idUsuario)
         if (objetivo != "SUSPENDIDO") throw ConflictoException("Esta cuenta no está suspendida")
         repositorio.levantarSuspension(idUsuario)
     }
 
-    /** Borra la cuenta y sus datos. No se puede eliminar a uno mismo ni a otro administrador. */
+    /** Borra la cuenta y sus datos. No se puede eliminar a uno mismo ni a alguien de su mismo nivel o superior. */
     suspend fun eliminar(rol: String, idAdmin: Int, idUsuario: Int) {
-        exigirAdmin(rol)
+        val visibles = rolesVisibles(rol)
         if (idAdmin == idUsuario) throw ProhibidoException("No puedes eliminar tu propia cuenta")
 
         repositorio.estatusDe(idUsuario) ?: throw NoEncontradoException("El usuario no existe")
-        if (repositorio.rolDe(idUsuario) in ROLES_ADMIN) {
-            throw ProhibidoException("No puedes eliminar a otro administrador")
-        }
+        exigirAdministrable(visibles, idUsuario)
         repositorio.eliminar(idUsuario)
+    }
+
+    /** Roles que puede ver y administrar quien entra al panel. Si no es administrador, 403. */
+    private fun rolesVisibles(rol: String): Set<RolUsuario> = when (rol) {
+        Roles.SUPER_ADMINISTRADOR -> setOf(RolUsuario.COMPRADOR, RolUsuario.VENDEDOR, RolUsuario.ADMINISTRADOR)
+        Roles.ADMINISTRADOR -> setOf(RolUsuario.COMPRADOR, RolUsuario.VENDEDOR)
+        else -> throw ProhibidoException("Solo administradores pueden consultar usuarios")
+    }
+
+    /** La cuenta debe ser de un rol que quien la administra puede ver. */
+    private suspend fun exigirAdministrable(visibles: Set<RolUsuario>, idUsuario: Int) {
+        val rolObjetivo = repositorio.rolDe(idUsuario)
+            ?.let { nombre -> RolUsuario.entries.firstOrNull { it.nombreBd == nombre } }
+        if (rolObjetivo == null || rolObjetivo !in visibles) {
+            throw ProhibidoException("No puedes administrar esta cuenta")
+        }
     }
 
     private fun exigirAdmin(rol: String) {

@@ -24,7 +24,9 @@ enum class EstatusUsuario { ACTIVO, SUSPENDIDO, DESACTIVADO }
 data class FiltrosUsuarios(
     val buscar: String?,
     val rol: RolUsuario?,
-    val estatus: EstatusUsuario?
+    val estatus: EstatusUsuario?,
+    /** Roles que puede ver quien consulta (nunca los de su mismo nivel). Siempre se aplica. */
+    val rolesVisibles: Set<RolUsuario>
 )
 
 @Serializable

@@ -18,6 +18,8 @@ object TextosPush {
         val nombre = datos["nombre"].orEmpty().trim()
         val prueba = datos["prueba"] == "true"
         val vence = fecha(datos["vencimiento"], idioma)
+        // Apelaciones: PUBLICACION (anuncio retirado) o SUSPENSION (cuenta suspendida)
+        val deCuenta = datos["apelacion"] == "SUSPENSION"
 
         return when (tipo) {
             TipoNotificacion.BIENVENIDA -> if (en) {
@@ -78,6 +80,27 @@ object TextosPush {
                 Texto("Report reviewed", "We reviewed your report about \"$titulo\" and no action was needed.")
             } else {
                 Texto("Reporte revisado", "Revisamos tu reporte sobre \"$titulo\" y no procedió.")
+            }
+
+            TipoNotificacion.APELACION_ENVIADA -> when {
+                en && deCuenta -> Texto("Appeal sent", "An administrator will review your appeal of the suspension.")
+                en -> Texto("Appeal sent", "An administrator will review your appeal about \"$titulo\".")
+                deCuenta -> Texto("Apelación enviada", "Un administrador revisará tu apelación de la suspensión.")
+                else -> Texto("Apelación enviada", "Un administrador revisará tu apelación sobre \"$titulo\".")
+            }
+
+            TipoNotificacion.APELACION_ACEPTADA -> when {
+                en && deCuenta -> Texto("Appeal accepted", "Your account is active again.")
+                en -> Texto("Appeal accepted", "\"$titulo\" is live again.")
+                deCuenta -> Texto("Apelación aceptada", "Tu cuenta ya está activa otra vez.")
+                else -> Texto("Apelación aceptada", "\"$titulo\" volvió a publicarse.")
+            }
+
+            TipoNotificacion.APELACION_RECHAZADA -> when {
+                en && deCuenta -> Texto("Appeal reviewed", "The suspension of your account stays. Reason: $motivo")
+                en -> Texto("Appeal reviewed", "The decision about \"$titulo\" stays. Reason: $motivo")
+                deCuenta -> Texto("Apelación revisada", "La suspensión de tu cuenta se mantiene. Motivo: $motivo")
+                else -> Texto("Apelación revisada", "La decisión sobre \"$titulo\" se mantiene. Motivo: $motivo")
             }
         }
     }

@@ -2,6 +2,8 @@ package com.equipo4.nearhouse.api.plugins
 
 import com.equipo4.nearhouse.api.admin.usuarios.AdminUsuarioService
 import com.equipo4.nearhouse.api.admin.usuarios.adminUsuarioRoutes
+import com.equipo4.nearhouse.api.apelaciones.ApelacionService
+import com.equipo4.nearhouse.api.apelaciones.apelacionRoutes
 import com.equipo4.nearhouse.api.colonias.ColoniaService
 import com.equipo4.nearhouse.api.colonias.coloniaRoutes
 import com.equipo4.nearhouse.api.guardados.GuardadoService
@@ -43,6 +45,7 @@ fun Application.configureRouting(
     notificacionService: NotificacionService,
     dispositivoService: DispositivoService,
     guardadoService: GuardadoService,
+    apelacionService: ApelacionService,
 ) {
     routing {
         get("/") {
@@ -77,6 +80,7 @@ fun Application.configureRouting(
             adminUsuarioRoutes(adminUsuarioService)
             notificacionRoutes(notificacionService)
             guardadoRoutes(guardadoService)
+            apelacionRoutes(apelacionService)
         }
     }
 }
