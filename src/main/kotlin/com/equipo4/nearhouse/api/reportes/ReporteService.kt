@@ -1,6 +1,7 @@
 package com.equipo4.nearhouse.api.reportes
 
 import com.equipo4.nearhouse.api.auth.Roles
+import com.equipo4.nearhouse.api.common.ApiException
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuerpoInvalidoException
 import com.equipo4.nearhouse.api.common.DemasiadasSolicitudesException
@@ -10,17 +11,32 @@ import com.equipo4.nearhouse.api.common.ValidacionException
 import com.equipo4.nearhouse.api.notificaciones.NotificacionService
 import com.equipo4.nearhouse.api.notificaciones.TipoNotificacion
 import com.equipo4.nearhouse.api.publicaciones.FotoGuardada
+import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.json.Json
 
 /**
  * Lo necesario para avisar al resolver un reporte.
  * [reportanteId] puede ser nulo: si la cuenta de quien reportó se eliminó, el reporte se queda sin autor.
+ * En reportes de publicación vienen [publicacionId] y [duenoId]; en reportes de usuario, [usuarioReportadoId].
+ * [titulo] es el título de la publicación o el nombre de la cuenta reportada.
  */
 data class AvisoReporte(
     val reportanteId: Int?,
-    val duenoId: Int,
-    val publicacionId: Int,
+    val duenoId: Int?,
+    val publicacionId: Int?,
+    val usuarioReportadoId: Int?,
     val titulo: String,
+) {
+    /** Datos del aviso. En reportes de usuario va su id para que la app abra su perfil. */
+    fun datos(): Map<String, String> = buildMap {
+        put("titulo", titulo)
+        usuarioReportadoId?.let { put("usuarioReportado", it.toString()) }
+    }
+}
+
+/** 403 con código: la cuenta del superadministrador no se puede reportar. */
+class NoReportableException : ApiException(
+    HttpStatusCode.Forbidden, "Esta cuenta no se puede reportar", codigo = "NO_REPORTABLE"
 )
 
 /** Reglas de negocio de reportes. Las validaciones siguen el orden de la especificación. */
@@ -46,43 +62,21 @@ class ReporteService(
             throw ProhibidoException("No puedes reportar tu propia publicación")
         }
 
-        val req = leerDatos(datosJson)
-        val errores = mutableListOf<String>()
-
-        // 3. Categoría, y el motivo debe pertenecer a esa categoría
-        val categoria = req.categoria.trim().uppercase()
-        val motivo = req.motivo.trim().uppercase()
-        if (categoria !in MOTIVOS_POR_CATEGORIA) {
-            errores += "La categoría no es válida"
-        } else if (motivo !in MOTIVOS_POR_CATEGORIA.getValue(categoria)) {
-            errores += "El motivo no corresponde a la categoría elegida"
-        }
-
-        // 4. Descripción: sin espacios al inicio ni al final, de 10 a 200 caracteres
-        val descripcion = req.descripcion
-        if (descripcion != descripcion.trim()) {
-            errores += "La descripción no puede empezar ni terminar con espacios"
-        }
-        if (descripcion.length !in MIN_DESCRIPCION..MAX_DESCRIPCION) {
-            errores += "La descripción debe tener entre $MIN_DESCRIPCION y $MAX_DESCRIPCION caracteres"
-        }
-
-        // 5. Imágenes (0 a 5, máximo 2 MB cada una, validadas por su contenido)
-        val imagenes = validarFotos(fotos, errores)
-
-        if (errores.isNotEmpty()) throw ValidacionException(errores)
+        // 3 a 5. Categoría y motivo, descripción e imágenes
+        val datos = validarDatos(datosJson, fotos, MOTIVOS_POR_CATEGORIA)
 
         // 6. Ya tiene un reporte pendiente de esta publicación
         if (repositorio.existePendiente(publicacionId, usuarioId)) {
             throw ConflictoException("Ya reportaste esta publicación; está en revisión")
         }
 
-        // 7. Límite diario
-        if (repositorio.reportesUltimas24h(usuarioId) >= MAX_REPORTES_DIA) {
-            throw DemasiadasSolicitudesException("Llegaste al límite de reportes por hoy. Intenta mañana.")
-        }
+        // 7. Límite diario (cuenta reportes de publicaciones y de usuarios)
+        exigirLimiteDiario(usuarioId)
 
-        val creado = repositorio.crear(usuarioId, publicacionId, categoria, motivo, descripcion, imagenes)
+        val creado = repositorio.crear(
+            usuarioId, ObjetivoReporte.Publicacion(publicacionId),
+            datos.categoria, datos.motivo, datos.descripcion, datos.imagenes
+        )
         notificaciones.notificar(
             usuarioId,
             TipoNotificacion.REPORTE_ENVIADO,
@@ -91,6 +85,95 @@ class ReporteService(
             idReporte = creado.id,
         )
         return creado
+    }
+
+    /**
+     * Reporte a un usuario (se entra por la bandera de su perfil).
+     * Mismo formato que el de publicaciones: "datos" (JSON) y de 0 a 5 imágenes en "fotos".
+     */
+    suspend fun crearDeUsuario(
+        usuarioId: Int,
+        reportadoId: Int,
+        datosJson: String?,
+        fotos: List<ByteArray>
+    ): ReporteCreadoResponse {
+        // 1. La cuenta existe y está activa
+        val reportado = repositorio.buscarUsuarioReportable(reportadoId)
+            ?: throw NoEncontradoException("El usuario no existe o ya no está disponible")
+
+        // 2. No eres tú, y no es el superadministrador
+        if (reportado.id == usuarioId) throw ProhibidoException("No puedes reportarte a ti mismo")
+        if (reportado.rol == Roles.SUPER_ADMINISTRADOR) throw NoReportableException()
+
+        // 3 a 5. Categoría y motivo, descripción e imágenes
+        val datos = validarDatos(datosJson, fotos, MOTIVOS_USUARIO_POR_CATEGORIA)
+
+        // 6. Ya tiene un reporte pendiente de esta cuenta
+        if (repositorio.existePendienteUsuario(reportadoId, usuarioId)) {
+            throw ConflictoException("Ya reportaste a este usuario; está en revisión")
+        }
+
+        // 7. Límite diario
+        exigirLimiteDiario(usuarioId)
+
+        val creado = repositorio.crear(
+            usuarioId, ObjetivoReporte.Usuario(reportadoId),
+            datos.categoria, datos.motivo, datos.descripcion, datos.imagenes
+        )
+        notificaciones.notificar(
+            usuarioId,
+            TipoNotificacion.REPORTE_ENVIADO,
+            mapOf("titulo" to reportado.nombre, "usuarioReportado" to reportadoId.toString()),
+            idReporte = creado.id,
+        )
+        return creado
+    }
+
+    private class DatosReporte(
+        val categoria: String,
+        val motivo: String,
+        val descripcion: String,
+        val imagenes: List<FotoEvidencia>
+    )
+
+    /** Valida el JSON y las fotos. [motivosPorCategoria] cambia según lo que se reporta. */
+    private fun validarDatos(
+        datosJson: String?,
+        fotos: List<ByteArray>,
+        motivosPorCategoria: Map<String, Set<String>>
+    ): DatosReporte {
+        val req = leerDatos(datosJson)
+        val errores = mutableListOf<String>()
+
+        // Categoría, y el motivo debe pertenecer a esa categoría
+        val categoria = req.categoria.trim().uppercase()
+        val motivo = req.motivo.trim().uppercase()
+        if (categoria !in motivosPorCategoria) {
+            errores += "La categoría no es válida"
+        } else if (motivo !in motivosPorCategoria.getValue(categoria)) {
+            errores += "El motivo no corresponde a la categoría elegida"
+        }
+
+        // Descripción: sin espacios al inicio ni al final, de 10 a 200 caracteres
+        val descripcion = req.descripcion
+        if (descripcion != descripcion.trim()) {
+            errores += "La descripción no puede empezar ni terminar con espacios"
+        }
+        if (descripcion.length !in MIN_DESCRIPCION..MAX_DESCRIPCION) {
+            errores += "La descripción debe tener entre $MIN_DESCRIPCION y $MAX_DESCRIPCION caracteres"
+        }
+
+        // Imágenes (0 a 5, máximo 2 MB cada una, validadas por su contenido)
+        val imagenes = validarFotos(fotos, errores)
+
+        if (errores.isNotEmpty()) throw ValidacionException(errores)
+        return DatosReporte(categoria, motivo, descripcion, imagenes)
+    }
+
+    private suspend fun exigirLimiteDiario(usuarioId: Int) {
+        if (repositorio.reportesUltimas24h(usuarioId) >= MAX_REPORTES_DIA) {
+            throw DemasiadasSolicitudesException("Llegaste al límite de reportes por hoy. Intenta mañana.")
+        }
     }
 
     private fun leerDatos(datosJson: String?): CrearReporteRequest {
@@ -145,7 +228,7 @@ class ReporteService(
 
         if (aviso != null) {
             // La nota del administrador es interna: no se manda en ningún aviso
-            val datos = mapOf("titulo" to aviso.titulo)
+            val datos = aviso.datos()
             val reportante = aviso.reportanteId
             if (req.estado == "PROCEDENTE") {
                 if (reportante != null) {
@@ -153,9 +236,10 @@ class ReporteService(
                         reportante, TipoNotificacion.REPORTE_ATENDIDO, datos, aviso.publicacionId, id
                     )
                 }
-                if (req.retirarPublicacion) {
+                val dueno = aviso.duenoId
+                if (req.retirarPublicacion && dueno != null) {
                     notificaciones.notificar(
-                        aviso.duenoId, TipoNotificacion.PUBLICACION_RETIRADA, datos, aviso.publicacionId, id
+                        dueno, TipoNotificacion.PUBLICACION_RETIRADA, datos, aviso.publicacionId, id
                     )
                 }
             } else if (reportante != null) {

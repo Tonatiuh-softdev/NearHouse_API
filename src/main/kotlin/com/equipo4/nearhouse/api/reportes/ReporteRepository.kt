@@ -11,11 +11,12 @@ import org.postgresql.util.PSQLException
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.sql.Types
 import java.time.OffsetDateTime
 import javax.sql.DataSource
 
 /**
- * Única capa que habla con PostgreSQL para reportes.
+ * Única capa que habla con PostgreSQL para reportes (de publicaciones y de usuarios).
  * El reporte y sus evidencias se guardan en UNA transacción.
  */
 class ReporteRepository(private val dataSource: DataSource) {
@@ -54,6 +55,50 @@ class ReporteRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** La cuenta solo si se puede ver: no desactivada ni con eliminación programada. */
+    suspend fun buscarUsuarioReportable(usuarioId: Int): UsuarioReportable? = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(
+                """
+                SELECT u.pke_id_usuario, u.t_nombre_usuario, u.t_primer_apellido_usuario, r.t_nombre_rol
+                FROM usuario u
+                JOIN rol r ON r.pke_id_rol = u.fke_id_rol
+                WHERE u.pke_id_usuario = ?
+                  AND u.fh_desactivacion_usuario IS NULL
+                  AND u.fh_eliminacion_programada_usuario IS NULL
+                """.trimIndent()
+            ).use { ps ->
+                ps.setInt(1, usuarioId)
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) {
+                        UsuarioReportable(
+                            id = rs.getInt(1),
+                            nombre = listOfNotNull(rs.getString(2), rs.getString(3)).joinToString(" "),
+                            rol = rs.getString(4)
+                        )
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun existePendienteUsuario(reportadoId: Int, usuarioId: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(
+                """
+                SELECT 1 FROM reporte
+                WHERE fke_id_usuario_reportado = ? AND fke_id_usuario_registro = ? AND t_estado_reporte = 'PENDIENTE'
+                """.trimIndent()
+            ).use { ps ->
+                ps.setInt(1, reportadoId)
+                ps.setInt(2, usuarioId)
+                ps.executeQuery().use { rs -> rs.next() }
+            }
+        }
+    }
+
     /** Reportes que el usuario hizo en las últimas 24 horas (de cualquier estado). */
     suspend fun reportesUltimas24h(usuarioId: Int): Int = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
@@ -71,7 +116,7 @@ class ReporteRepository(private val dataSource: DataSource) {
 
     suspend fun crear(
         usuarioId: Int,
-        publicacionId: Int,
+        objetivo: ObjetivoReporte,
         categoria: String,
         motivo: String,
         descripcion: String,
@@ -80,7 +125,7 @@ class ReporteRepository(private val dataSource: DataSource) {
         dataSource.connection.use { conn ->
             conn.autoCommit = false
             try {
-                val (reporteId, estado) = insertarReporte(conn, usuarioId, publicacionId, categoria, motivo, descripcion)
+                val (reporteId, estado) = insertarReporte(conn, usuarioId, objetivo, categoria, motivo, descripcion)
                 // El orden 1 es la primera imagen que mandó el usuario
                 fotos.forEachIndexed { i, foto -> insertarEvidencia(conn, reporteId, i + 1, foto) }
                 conn.commit()
@@ -97,7 +142,7 @@ class ReporteRepository(private val dataSource: DataSource) {
     private fun insertarReporte(
         conn: Connection,
         usuarioId: Int,
-        publicacionId: Int,
+        objetivo: ObjetivoReporte,
         categoria: String,
         motivo: String,
         descripcion: String
@@ -105,17 +150,27 @@ class ReporteRepository(private val dataSource: DataSource) {
         conn.prepareStatement(
             """
             INSERT INTO reporte (
-                fke_id_publicacion, fke_id_usuario_registro,
+                fke_id_publicacion, fke_id_usuario_reportado, fke_id_usuario_registro,
                 t_categoria_reporte, t_motivo_reporte, t_descripcion_reporte
-            ) VALUES (?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?)
             RETURNING pke_id_reporte, t_estado_reporte
             """.trimIndent()
         ).use { ps ->
-            ps.setInt(1, publicacionId)
-            ps.setInt(2, usuarioId)
-            ps.setString(3, categoria)
-            ps.setString(4, motivo)
-            ps.setString(5, descripcion)
+            // Solo uno de los dos lleva valor (ck_reporte_objetivo)
+            when (objetivo) {
+                is ObjetivoReporte.Publicacion -> {
+                    ps.setInt(1, objetivo.id)
+                    ps.setNull(2, Types.INTEGER)
+                }
+                is ObjetivoReporte.Usuario -> {
+                    ps.setNull(1, Types.INTEGER)
+                    ps.setInt(2, objetivo.id)
+                }
+            }
+            ps.setInt(3, usuarioId)
+            ps.setString(4, categoria)
+            ps.setString(5, motivo)
+            ps.setString(6, descripcion)
             ps.executeQuery().use { rs ->
                 rs.next()
                 rs.getInt("pke_id_reporte") to rs.getString("t_estado_reporte")
@@ -147,6 +202,8 @@ class ReporteRepository(private val dataSource: DataSource) {
         return when {
             e.sqlState == "23505" && restriccion == "uq_reporte_pendiente_por_usuario" ->
                 ConflictoException("Ya reportaste esta publicación; está en revisión")
+            e.sqlState == "23505" && restriccion == "uq_reporte_usuario_pendiente" ->
+                ConflictoException("Ya reportaste a este usuario; está en revisión")
             e.sqlState == "23514" ->
                 ValidacionException(listOf("Los datos del reporte no cumplen las reglas de la base de datos"))
             else -> e
@@ -191,14 +248,20 @@ class ReporteRepository(private val dataSource: DataSource) {
         }
     }
 
-    /** Quién reportó, de quién es la publicación y su título: lo que hace falta para avisar al resolver. */
+    /**
+     * Quién reportó y qué se reportó (publicación con su dueño, o la cuenta): lo que hace falta para avisar al resolver.
+     * En reportes de usuario, el "título" del aviso es el nombre de la cuenta.
+     */
     suspend fun datosParaAviso(reporteId: Int): AvisoReporte? = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
             conn.prepareStatement(
                 """
-                SELECT r.fke_id_usuario_registro, p.fke_id_usuario, p.pke_id_publicacion, p.t_nombre_publicacion
+                SELECT r.fke_id_usuario_registro, p.fke_id_usuario, p.pke_id_publicacion, r.fke_id_usuario_reportado,
+                       COALESCE(p.t_nombre_publicacion,
+                                concat_ws(' ', ur.t_nombre_usuario, ur.t_primer_apellido_usuario)) AS titulo
                 FROM reporte r
-                JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
+                LEFT JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
+                LEFT JOIN usuario ur ON ur.pke_id_usuario = r.fke_id_usuario_reportado
                 WHERE r.pke_id_reporte = ?
                 """.trimIndent()
             ).use { ps ->
@@ -206,10 +269,11 @@ class ReporteRepository(private val dataSource: DataSource) {
                 ps.executeQuery().use { rs ->
                     if (rs.next()) {
                         AvisoReporte(
-                            reportanteId = rs.getInt(1).let { if (rs.wasNull()) null else it },
-                            duenoId = rs.getInt(2),
-                            publicacionId = rs.getInt(3),
-                            titulo = rs.getString(4)
+                            reportanteId = rs.intONull(1),
+                            duenoId = rs.intONull(2),
+                            publicacionId = rs.intONull(3),
+                            usuarioReportadoId = rs.intONull(4),
+                            titulo = rs.getString(5).orEmpty()
                         )
                     } else {
                         null
@@ -222,19 +286,22 @@ class ReporteRepository(private val dataSource: DataSource) {
     /**
      * Resuelve un reporte pendiente. Si [retirar] es true, la publicación pasa a RECHAZADA
      * y los demás reportes pendientes de esa publicación se cierran como PROCEDENTE. Todo en una transacción.
+     * Retirar solo aplica a reportes de publicación.
      *
-     * El orden de las validaciones importa: primero el dueño (403) y después el estado (409).
+     * El orden de las validaciones importa: primero quién lo resuelve (403) y después el estado (409).
+     * Un administrador no resuelve reportes de sus publicaciones, sobre su cuenta ni los que él mismo hizo.
      */
     suspend fun resolver(id: Int, revisorId: Int, estado: String, nota: String, retirar: Boolean): Unit =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { conn ->
                 conn.autoCommit = false
                 try {
-                    val (publicacionId, duenoId, estadoActual) = conn.prepareStatement(
+                    val actual = conn.prepareStatement(
                         """
-                        SELECT r.fke_id_publicacion, p.fke_id_usuario, r.t_estado_reporte
+                        SELECT r.fke_id_publicacion, p.fke_id_usuario, r.fke_id_usuario_reportado,
+                               r.fke_id_usuario_registro, r.t_estado_reporte
                         FROM reporte r
-                        JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
+                        LEFT JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
                         WHERE r.pke_id_reporte = ?
                         FOR UPDATE OF r
                         """.trimIndent()
@@ -242,14 +309,30 @@ class ReporteRepository(private val dataSource: DataSource) {
                         ps.setInt(1, id)
                         ps.executeQuery().use { rs ->
                             if (!rs.next()) throw NoEncontradoException("El reporte no existe")
-                            Triple(rs.getInt(1), rs.getInt(2), rs.getString(3))
+                            ReporteParaResolver(
+                                publicacionId = rs.intONull(1),
+                                duenoId = rs.intONull(2),
+                                usuarioReportadoId = rs.intONull(3),
+                                reportanteId = rs.intONull(4),
+                                estado = rs.getString(5)
+                            )
                         }
                     }
 
-                    if (duenoId == revisorId) {
+                    if (actual.duenoId == revisorId) {
                         throw ProhibidoException("No puedes resolver reportes de tus propias publicaciones")
                     }
-                    if (estadoActual != "PENDIENTE") throw ConflictoException("Este reporte ya fue resuelto")
+                    if (actual.usuarioReportadoId == revisorId) {
+                        throw ProhibidoException("No puedes resolver reportes sobre tu propia cuenta")
+                    }
+                    if (actual.reportanteId == revisorId) {
+                        throw ProhibidoException("No puedes resolver reportes que tú hiciste")
+                    }
+                    if (actual.estado != "PENDIENTE") throw ConflictoException("Este reporte ya fue resuelto")
+                    val publicacionId = actual.publicacionId
+                    if (retirar && publicacionId == null) {
+                        throw ValidacionException(listOf("Solo se puede retirar la publicación en reportes de publicaciones"))
+                    }
 
                     conn.prepareStatement(
                         """
@@ -267,7 +350,7 @@ class ReporteRepository(private val dataSource: DataSource) {
                         ps.executeUpdate()
                     }
 
-                    if (retirar) {
+                    if (retirar && publicacionId != null) {
                         conn.prepareStatement(
                             """
                             UPDATE publicacion
@@ -317,27 +400,49 @@ class ReporteRepository(private val dataSource: DataSource) {
     private fun ResultSet.millis(columna: String): Long? =
         getObject(columna, OffsetDateTime::class.java)?.toInstant()?.toEpochMilli()
 
-    private fun ResultSet.resumen() = PublicacionResumenResponse(
-        id = getInt("pub_id"),
-        titulo = getString("pub_titulo"),
-        fotoId = (getObject("foto_principal") as? Number)?.toInt(),
-        estado = getString("pub_estado"),
-        reportesPendientes = getInt("pendientes_pub")
-    )
+    private fun ResultSet.intONull(columna: Int): Int? = getInt(columna).let { if (wasNull()) null else it }
+
+    private fun ResultSet.intONull(columna: String): Int? = getInt(columna).let { if (wasNull()) null else it }
+
+    /** Null en reportes de usuario. */
+    private fun ResultSet.resumen(): PublicacionResumenResponse? {
+        val id = intONull("pub_id") ?: return null
+        return PublicacionResumenResponse(
+            id = id,
+            titulo = getString("pub_titulo"),
+            fotoId = (getObject("foto_principal") as? Number)?.toInt(),
+            estado = getString("pub_estado"),
+            reportesPendientes = getInt("pendientes_pub")
+        )
+    }
+
+    /** Null en reportes de publicación. */
+    private fun ResultSet.usuarioReportado(): UsuarioReportadoResponse? {
+        val id = intONull("ur_id") ?: return null
+        return UsuarioReportadoResponse(
+            id = id,
+            nombre = listOfNotNull(getString("ur_nombre"), getString("ur_apellido")).joinToString(" "),
+            tieneFoto = getBoolean("ur_tiene_foto"),
+            reportesPendientes = getInt("pendientes_usr")
+        )
+    }
 
     private fun ResultSet.toListaItem() = ReporteListaResponse(
         id = getInt("pke_id_reporte"),
+        tipo = getString("tipo"),
         categoria = getString("t_categoria_reporte"),
         motivo = getString("t_motivo_reporte"),
         descripcionCorta = getString("t_descripcion_reporte").take(80),
         fecha = millis("fh_fecha_registro_reporte") ?: 0L,
         estado = getString("t_estado_reporte"),
         imagenes = getInt("num_evidencias"),
-        publicacion = resumen()
+        publicacion = resumen(),
+        usuario = usuarioReportado()
     )
 
     private fun ResultSet.toDetalle() = ReporteDetalleResponse(
         id = getInt("pke_id_reporte"),
+        tipo = getString("tipo"),
         categoria = getString("t_categoria_reporte"),
         motivo = getString("t_motivo_reporte"),
         descripcion = getString("t_descripcion_reporte"),
@@ -345,6 +450,9 @@ class ReporteRepository(private val dataSource: DataSource) {
         estado = getString("t_estado_reporte"),
         imagenes = (getArray("evidencias_ids").array as Array<*>).map { (it as Number).toInt() },
         publicacion = resumen(),
+        usuario = usuarioReportado(),
+        // Si la cuenta de quien reportó se eliminó, el id queda vacío
+        reportadoPorId = intONull("rep_id"),
         reportadoPorNombre = getString("rep_nombre")?.let { listOfNotNull(it, getString("rep_apellido")).joinToString(" ") },
         reportadoPorCorreo = getString("rep_correo"),
         nota = getString("t_resolucion_reporte"),
@@ -352,9 +460,20 @@ class ReporteRepository(private val dataSource: DataSource) {
         fechaResolucion = millis("fh_fecha_actualizacion_reporte")
     )
 
+    /** Lo que se revisa antes de resolver un reporte. */
+    private data class ReporteParaResolver(
+        val publicacionId: Int?,
+        val duenoId: Int?,
+        val usuarioReportadoId: Int?,
+        val reportanteId: Int?,
+        val estado: String
+    )
+
     private companion object {
         const val SELECT_REPORTE = """
-            SELECT r.pke_id_reporte, r.t_categoria_reporte, r.t_motivo_reporte, r.t_descripcion_reporte,
+            SELECT r.pke_id_reporte,
+                   CASE WHEN r.fke_id_usuario_reportado IS NOT NULL THEN 'USUARIO' ELSE 'PUBLICACION' END AS tipo,
+                   r.t_categoria_reporte, r.t_motivo_reporte, r.t_descripcion_reporte,
                    r.t_estado_reporte, r.t_resolucion_reporte,
                    r.fh_fecha_registro_reporte, r.fh_fecha_actualizacion_reporte,
                    p.pke_id_publicacion AS pub_id, p.t_nombre_publicacion AS pub_titulo,
@@ -367,12 +486,18 @@ class ReporteRepository(private val dataSource: DataSource) {
                             ARRAY[]::int[]) AS evidencias_ids,
                    (SELECT COUNT(*) FROM reporte r2 WHERE r2.fke_id_publicacion = p.pke_id_publicacion
                       AND r2.t_estado_reporte = 'PENDIENTE') AS pendientes_pub,
+                   ur.pke_id_usuario AS ur_id, ur.t_nombre_usuario AS ur_nombre,
+                   ur.t_primer_apellido_usuario AS ur_apellido, (ur.by_foto_usuario IS NOT NULL) AS ur_tiene_foto,
+                   (SELECT COUNT(*) FROM reporte r3 WHERE r3.fke_id_usuario_reportado = ur.pke_id_usuario
+                      AND r3.t_estado_reporte = 'PENDIENTE') AS pendientes_usr,
+                   r.fke_id_usuario_registro AS rep_id,
                    u.t_nombre_usuario AS rep_nombre, u.t_primer_apellido_usuario AS rep_apellido,
                    u.t_correo_usuario AS rep_correo,
                    a.t_nombre_usuario AS res_nombre, a.t_primer_apellido_usuario AS res_apellido
             FROM reporte r
-            JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
-            JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
+            LEFT JOIN publicacion p ON p.pke_id_publicacion = r.fke_id_publicacion
+            LEFT JOIN propiedad pr ON pr.fke_id_publicacion = p.pke_id_publicacion
+            LEFT JOIN usuario ur ON ur.pke_id_usuario = r.fke_id_usuario_reportado
             LEFT JOIN usuario u ON u.pke_id_usuario = r.fke_id_usuario_registro
             LEFT JOIN usuario a ON a.pke_id_usuario = r.fke_id_usuario_actualizacion
         """

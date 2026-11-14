@@ -114,8 +114,9 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
                    (SELECT COUNT(*) FROM publicacion p
                      WHERE p.fke_id_usuario = u.pke_id_usuario AND p.t_estado_publicacion = 'RECHAZADA') AS rechazadas,
                    (SELECT COUNT(*) FROM reporte rp
-                     JOIN publicacion p ON p.pke_id_publicacion = rp.fke_id_publicacion
-                     WHERE p.fke_id_usuario = u.pke_id_usuario AND $SQL_REPORTE_PENDIENTE) AS reportes_pendientes
+                     LEFT JOIN publicacion p ON p.pke_id_publicacion = rp.fke_id_publicacion
+                     WHERE (p.fke_id_usuario = u.pke_id_usuario OR rp.fke_id_usuario_reportado = u.pke_id_usuario)
+                       AND $SQL_REPORTE_PENDIENTE) AS reportes_pendientes
             FROM usuario u
             JOIN rol r ON r.pke_id_rol = u.fke_id_rol
             LEFT JOIN suscripcion s ON s.pke_id_suscripcion = u.fke_id_suscripcion

@@ -38,6 +38,16 @@ fun Route.reporteRoutes(service: ReporteService) {
             )
         }
 
+        // POST /api/v1/usuarios/{id}/reportes  (reportar a un usuario desde su perfil)
+        // Mismo formato: campo "datos" (JSON) + de 0 a 5 archivos en el campo "fotos"
+        post("/usuarios/{id}/reportes") {
+            val (datos, fotos) = call.recibirReporte()
+            call.respond(
+                HttpStatusCode.Created,
+                service.crearDeUsuario(call.usuarioId(), call.idDeRuta(), datos, fotos)
+            )
+        }
+
         // Administración de reportes (solo administradores)
         route("/admin/reportes") {
 
