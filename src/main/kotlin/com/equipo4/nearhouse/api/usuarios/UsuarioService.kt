@@ -767,6 +767,23 @@ class UsuarioService(
         return fechaEliminacion
     }
 
+    /**
+     * Borra de verdad las cuentas cuya fecha de eliminación ya llegó (30 días después de pedirla).
+     * Si el usuario inició sesión antes de esa fecha, la fecha se quitó y no se borra.
+     * Regresa cuántas cuentas borró.
+     */
+    suspend fun borrarCuentasVencidas(): Int {
+        var borradas = 0
+        for ((id, _) in repositorio.cuentasPorEliminar()) {
+            try {
+                if (repositorio.eliminarDefinitivamente(id)) borradas++
+            } catch (_: Exception) {
+                // Si una cuenta falla, las demás se siguen procesando
+            }
+        }
+        return borradas
+    }
+
     /** Cancela el plan y devuelve al usuario a "Comprador" (oculta sus anuncios). */
     suspend fun cancelarPlan(usuarioId: Int): AuthResponse {
         val usuario = repositorio.buscarPorId(usuarioId)
@@ -952,6 +969,9 @@ class UsuarioService(
             usarPrueba = usarPrueba,
             pasarAVendedor = usuario.rol == "Comprador"
         )
+
+        // Si tenía anuncios ocultos por cancelar el plan anterior, vuelven a verse
+        repositorio.reactivarAnunciosOcultosPorPlan(usuarioId)
 
         notificaciones.notificar(
             usuarioId,
