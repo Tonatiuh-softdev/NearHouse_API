@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import javax.sql.DataSource
+import com.equipo4.nearhouse.api.publicaciones.compartirRoutes
 
 @Serializable
 data class InfoResponse(val nombre: String, val version: String)
@@ -70,6 +71,9 @@ fun Application.configureRouting(
                 )
             }
         }
+
+        // Página pública para compartir un anuncio: /p/{id}
+        compartirRoutes(publicacionService)
 
         // Todas las rutas de negocio viven bajo /api/v1
         route("/api/v1") {

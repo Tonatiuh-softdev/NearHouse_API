@@ -103,6 +103,10 @@ class PublicacionService(
         return anuncio
     }
 
+    /** Para la página pública de "Compartir": el anuncio solo si se puede ver en Inicio; si no, null. */
+    suspend fun paraCompartir(id: Int): PublicacionResponse? =
+        if (repositorio.esVisible(id)) repositorio.buscarPorId(id) else null
+
     suspend fun foto(id: Int): FotoGuardada =
         repositorio.buscarFoto(id) ?: throw NoEncontradoException("La foto no existe")
 
