@@ -283,6 +283,58 @@ class UsuarioRepository(private val dataSource: DataSource) {
      * Cancela el plan: quita la suscripción y la fecha de vencimiento.
      * Sube la versión de sesión para invalidar tokens viejos.
      */
+    /**
+     * Cancela el plan en UNA sola transacción: quita el plan, regresa a Comprador y oculta los anuncios.
+     * Si algo falla, no se guarda nada (antes, un error a la mitad dejaba la cuenta a medias).
+     */
+    suspend fun cancelarPlanCompleto(idUsuario: Int) = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            try {
+                conn.prepareStatement(
+                    """
+                    UPDATE usuario
+                    SET fke_id_suscripcion = NULL,
+                        fh_inicio_suscripcion_usuario = NULL,
+                        fh_vencimiento_suscripcion_usuario = NULL,
+                        e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                        fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                    WHERE pke_id_usuario = ?
+                    """
+                ).use { ps -> ps.setInt(1, idUsuario); ps.executeUpdate() }
+
+                conn.prepareStatement(
+                    """
+                    UPDATE usuario
+                    SET fke_id_rol = (SELECT pke_id_rol FROM rol WHERE t_nombre_rol = ? AND b_estatus_rol),
+                        e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                        fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                    WHERE pke_id_usuario = ?
+                    """
+                ).use { ps -> ps.setString(1, "Comprador"); ps.setInt(2, idUsuario); ps.executeUpdate() }
+
+                conn.prepareStatement(
+                    """
+                    UPDATE publicacion
+                    SET b_estatus_publicacion = FALSE,
+                        b_oculta_por_plan_publicacion = TRUE,
+                        fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP
+                    WHERE fke_id_usuario = ?
+                      AND b_estatus_publicacion = TRUE
+                      AND b_eliminada_publicacion = FALSE
+                    """
+                ).use { ps -> ps.setInt(1, idUsuario); ps.executeUpdate() }
+
+                conn.commit()
+            } catch (e: Exception) {
+                conn.rollback()
+                throw e
+            } finally {
+                conn.autoCommit = true
+            }
+        }
+    }
+
     suspend fun cancelarPlan(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
             val sql = """
