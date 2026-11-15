@@ -6,6 +6,7 @@ import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
 import com.equipo4.nearhouse.api.auth.PasswordHasher
+import com.equipo4.nearhouse.api.auth.PoliticaContrasena
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuentaDesactivadaException
@@ -486,9 +487,8 @@ class UsuarioService(
         }
 
         val nueva = req.contrasenaNueva.trim()
-        if (nueva.length < MIN_CONTRASENA) {
-            throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
-        }
+        val fallas = PoliticaContrasena.validar(nueva)
+        if (fallas.isNotEmpty()) throw ValidacionException(fallas)
         if (nueva.toByteArray().size > MAX_CONTRASENA_BYTES) {
             throw ValidacionException(listOf("La nueva contraseña es demasiado larga"))
         }
@@ -683,9 +683,8 @@ class UsuarioService(
 
         // PASO 6.3: Validar contraseña nueva
         val nueva = req.contrasenaNueva.trim()
-        if (nueva.length < MIN_CONTRASENA) {
-            throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
-        }
+        val fallas = PoliticaContrasena.validar(nueva)
+        if (fallas.isNotEmpty()) throw ValidacionException(fallas)
         if (nueva.toByteArray().size > MAX_CONTRASENA_BYTES) {
             throw ValidacionException(listOf("La nueva contraseña es demasiado larga"))
         }
@@ -993,9 +992,7 @@ class UsuarioService(
         val errores = mutableListOf<String>()
 
         if (!REGEX_CORREO.matches(correo)) errores += "El correo no tiene un formato válido"
-        if (req.contrasena.length < MIN_CONTRASENA) {
-            errores += "La contraseña debe tener al menos $MIN_CONTRASENA caracteres"
-        }
+        errores += PoliticaContrasena.validar(req.contrasena)
         if (req.contrasena.toByteArray().size > MAX_CONTRASENA_BYTES) {
             errores += "La contraseña es demasiado larga (máximo $MAX_CONTRASENA_BYTES caracteres)"
         }
