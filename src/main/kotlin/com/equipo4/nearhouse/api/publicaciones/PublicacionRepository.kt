@@ -89,14 +89,27 @@ class PublicacionRepository(private val dataSource: DataSource) {
     }
 
     /** Borra cualquier anuncio (solo para el administrador). */
-    suspend fun eliminarCualquiera(id: Int): Boolean = withContext(Dispatchers.IO) {
-        dataSource.connection.use { conn ->
-            conn.prepareStatement("DELETE FROM publicacion WHERE pke_id_publicacion = ?").use { ps ->
-                ps.setInt(1, id)
-                ps.executeUpdate() > 0
-            }
+   suspend fun eliminarCualquiera(id: Int, revisorId: Int): Boolean = withContext(Dispatchers.IO) {
+    dataSource.connection.use { conn ->
+        conn.prepareStatement(
+            """
+            UPDATE publicacion
+            SET b_eliminada_publicacion = TRUE,
+                fh_eliminacion_publicacion = CURRENT_TIMESTAMP,
+                fke_id_usuario_eliminacion = ?,
+                b_estatus_publicacion = FALSE,
+                fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
+                fke_id_usuario_actualizacion = ?
+            WHERE pke_id_publicacion = ? AND b_eliminada_publicacion = FALSE
+            """
+        ).use { ps ->
+            ps.setInt(1, revisorId)
+            ps.setInt(2, revisorId)
+            ps.setInt(3, id)
+            ps.executeUpdate() > 0
         }
     }
+}
 
     // ---------- Consultas (home y administrador) ----------
 
@@ -108,6 +121,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
     ): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             val filtros = buildList {
+                add("p.b_eliminada_publicacion = FALSE")
                 if (soloPublicadas) add("EXISTS (SELECT 1 FROM vw_publicacion_visible v WHERE v.pke_id_publicacion = p.pke_id_publicacion)")
                 if (estado != null) add("p.t_estado_publicacion = ?")
                 if (usuarioVendedorId != null) add("p.fke_id_usuario = ?")
@@ -129,7 +143,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
 
     suspend fun esVisible(id: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
-            conn.prepareStatement("SELECT 1 FROM vw_publicacion_visible WHERE pke_id_publicacion = ?").use { ps ->
+            conn.prepareStatement("SELECT 1 FROM vw_publicacion_visible WHERE pke_id_publicacion = ? AND p.b_eliminada_publicacion = FALSE").use { ps ->
                 ps.setInt(1, id)
                 ps.executeQuery().use { it.next() }
             }
@@ -139,7 +153,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
     suspend fun buscarPorId(id: Int, usuarioLogueadoId: Int? = null): PublicacionResponse? = withContext(Dispatchers.IO) {
         val guardadosSet = if (usuarioLogueadoId != null) obtenerIdsGuardados(usuarioLogueadoId) else emptySet()
         dataSource.connection.use { conn ->
-            conn.prepareStatement("$SELECT_PUBLICACION WHERE p.pke_id_publicacion = ?").use { ps ->
+           conn.prepareStatement("$SELECT_PUBLICACION WHERE p.pke_id_publicacion = ? AND p.b_eliminada_publicacion = FALSE").use { ps ->
                 ps.setInt(1, id)
                 ps.executeQuery().use { rs -> if (rs.next()) rs.toPublicacion(guardadosSet) else null }
             }
@@ -149,7 +163,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
     suspend fun buscarPorIds(ids: List<Int>, usuarioLogueadoId: Int? = null): List<PublicacionResponse> =
         withContext(Dispatchers.IO) {
             if (ids.isEmpty()) return@withContext emptyList()
-            val sql = "$SELECT_PUBLICACION WHERE p.pke_id_publicacion = ANY(?)"
+            val sql = "$SELECT_PUBLICACION WHERE p.pke_id_publicacion = ANY(?) AND p.b_eliminada_publicacion = FALSE"
             val guardadosSet = if (usuarioLogueadoId != null) obtenerIdsGuardados(usuarioLogueadoId) else emptySet()
             dataSource.connection.use { conn ->
                 conn.prepareStatement(sql).use { ps ->
@@ -273,18 +287,29 @@ class PublicacionRepository(private val dataSource: DataSource) {
             }
         }
 
-    suspend fun eliminar(id: Int, usuarioId: Int): Boolean =
-        withContext(Dispatchers.IO) {
-            dataSource.connection.use { conn ->
-                conn.prepareStatement(
-                    "DELETE FROM publicacion WHERE pke_id_publicacion = ? AND fke_id_usuario = ?"
-                ).use { ps ->
-                    ps.setInt(1, id)
-                    ps.setInt(2, usuarioId)
-                    ps.executeUpdate() > 0
-                }
+    /** Borrado lógico del anuncio propio (vendedor). */
+    suspend fun eliminar(id: Int, usuarioId: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            conn.prepareStatement(
+                """
+                UPDATE publicacion
+                SET b_eliminada_publicacion = TRUE,
+                    fh_eliminacion_publicacion = CURRENT_TIMESTAMP,
+                    fke_id_usuario_eliminacion = ?,
+                    b_estatus_publicacion = FALSE,
+                    fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
+                    fke_id_usuario_actualizacion = ?
+                WHERE pke_id_publicacion = ? AND fke_id_usuario = ? AND b_eliminada_publicacion = FALSE
+                """
+            ).use { ps ->
+                ps.setInt(1, usuarioId)
+                ps.setInt(2, usuarioId)
+                ps.setInt(3, id)
+                ps.setInt(4, usuarioId)
+                ps.executeUpdate() > 0
             }
         }
+    }
 
     suspend fun editar(
         id: Int,

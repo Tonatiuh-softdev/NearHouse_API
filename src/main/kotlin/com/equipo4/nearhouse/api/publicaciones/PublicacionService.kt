@@ -252,13 +252,12 @@ class PublicacionService(
         }
     }
 
-    /** Eliminar como administrador: cualquier anuncio, sin importar su estado. */
-    suspend fun eliminarComoAdmin(rol: String, id: Int) {
+    /** Borrado lógico de cualquier anuncio (administrador). Queda registrado quién lo eliminó. */
+    suspend fun eliminarComoAdmin(rol: String, revisorId: Int, id: Int) {
         exigirAdmin(rol)
         if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
-        repositorio.eliminarCualquiera(id)
+        repositorio.eliminarCualquiera(id, revisorId)
     }
-
     private suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?) {
         if (!repositorio.revisar(id, revisorId, nuevoEstado, motivo)) {
             if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")

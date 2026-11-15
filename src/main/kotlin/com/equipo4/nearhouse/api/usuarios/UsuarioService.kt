@@ -722,6 +722,81 @@ class UsuarioService(
         return AuthResponse(token = nuevoToken, usuario = usuarioActualizado.toResponse())
     }
 
+    /** Programa la eliminación de la cuenta a 30 días y manda correo. */
+    suspend fun eliminarCuenta(usuarioId: Int, req: DesactivarCuentaRequest): OffsetDateTime {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        if (usuario.rol.lowercase().contains("admin")) {
+            throw ProhibidoException("Un administrador no puede eliminar su cuenta")
+        }
+
+        // Confirmar identidad
+        if (usuario.contrasenaHash != null) {
+            if (req.contrasena.isNullOrBlank() ||
+                !PasswordHasher.verificar(req.contrasena, usuario.contrasenaHash)
+            ) {
+                throw ValidacionException(listOf("La contraseña actual es incorrecta"))
+            }
+        } else if (usuario.googleId != null) {
+            val googleToken = req.googleToken
+            if (googleToken.isNullOrBlank()) {
+                throw ValidacionException(listOf("El token de Google es requerido"))
+            }
+            val payload = firebaseTokenVerifier.verifyToken(googleToken)
+            if (payload == null || (
+                        payload.googleId != usuario.googleId &&
+                        payload.email.lowercase() != usuario.correo.lowercase()
+                        )
+            ) {
+                throw ValidacionException(listOf("La verificación de Google no corresponde a esta cuenta"))
+            }
+        }
+
+        // 1. Programar eliminación a 30 días
+        val fechaEliminacion = repositorio.programarEliminacion(usuarioId, 30)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        // 2. Enviar correo de aviso
+        try {
+            val fechaStr = fechaEliminacion.toLocalDate().toString()
+            enviador.enviar(PlantillasCorreo.eliminacionProgramada(usuario.correo, fechaStr))
+        } catch (_: Exception) {
+            // Si el correo falla, la eliminación queda programada igual
+        }
+
+        return fechaEliminacion
+    }
+
+    /** Cancela el plan y devuelve al usuario a "Comprador" (oculta sus anuncios). */
+    suspend fun cancelarPlan(usuarioId: Int): AuthResponse {
+        val usuario = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
+
+        if (usuario.rol != "Vendedor") {
+            throw ConflictoException("Solo los vendedores con plan pueden cancelar la suscripción")
+        }
+
+        val nombrePlanAnterior = usuario.planNombre ?: "tu plan"
+
+        repositorio.cancelarPlan(usuarioId)             // quitar plan y fecha de vencimiento
+        repositorio.cambiarRol(usuarioId, "Comprador")  // regresar a comprador
+        repositorio.ocultarAnuncios(usuarioId)          // ocultar anuncios sin borrarlos
+
+        // Enviar correo de aviso
+        try {
+            enviador.enviar(PlantillasCorreo.planCancelado(usuario.correo, nombrePlanAnterior))
+        } catch (_: Exception) {
+            // Si el correo falla, la cancelación queda igual
+        }
+
+        val actualizado = repositorio.buscarPorId(usuarioId)!!
+        return AuthResponse(
+            token = jwtService.generarToken(actualizado.id, actualizado.rol, actualizado.versionSesion),
+            usuario = actualizado.toResponse()
+        )
+    }
+
     /** Desactiva la cuenta del usuario previa verificación de identidad. */
     suspend fun desactivarCuenta(usuarioId: Int, req: DesactivarCuentaRequest) {
         val usuario = repositorio.buscarPorId(usuarioId)

@@ -156,6 +156,18 @@ object PlantillasCorreo {
         texto = "Tu cuenta de NearHouse y tus anuncios se eliminaron. Gracias por usar NearHouse.",
     )
 
+    /** Correo de aviso cuando el usuario cancela su suscripción. */
+    fun planCancelado(para: String, planNombre: String) = MensajeCorreo(
+        para = para,
+        asunto = "Tu suscripción de NearHouse fue cancelada",
+        html = diseno(
+            "Tu suscripción se canceló",
+            "<p>Cancelaste tu plan <b>$planNombre</b>. Tu cuenta vuelve a ser de comprador y tus anuncios ya no se ven.</p>" +
+                "<p>Puedes contratar un plan nuevo cuando quieras y tus anuncios volverán a mostrarse.</p>",
+        ),
+        texto = "Cancelaste tu plan $planNombre. Tu cuenta vuelve a ser de comprador y tus anuncios ya no se ven. Puedes contratar un plan nuevo cuando quieras y tus anuncios volverán a mostrarse.",
+    )
+
     /**
      * Resultado de la apelación de una suspensión. La cuenta suspendida no puede entrar a ver sus avisos,
      * por eso también se le avisa por correo. [nota] es la respuesta del administrador.
