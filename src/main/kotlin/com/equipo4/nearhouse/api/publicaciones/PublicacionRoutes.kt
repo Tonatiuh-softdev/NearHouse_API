@@ -129,7 +129,7 @@ fun Route.publicacionRoutes(service: PublicacionService) {
 
             // DELETE /api/v1/admin/publicaciones/{id} -> elimina cualquier anuncio (204 sin cuerpo)
             delete("/{id}") {
-                service.eliminarComoAdmin(call.usuarioRol(), call.idDeRuta())
+                service.eliminarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta())
                 call.respond(HttpStatusCode.NoContent)
             }
         }

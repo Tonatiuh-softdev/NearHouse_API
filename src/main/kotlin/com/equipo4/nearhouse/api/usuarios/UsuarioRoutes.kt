@@ -129,6 +129,16 @@ fun Route.usuarioRoutes(service: UsuarioService) {
             call.respond(HttpStatusCode.NoContent)
         }
 
+        // POST /api/v1/usuarios/me/eliminar -> programa la eliminación a 30 días
+        post("/usuarios/me/eliminar") {
+            val req = call.recibir<DesactivarCuentaRequest>()
+            val fecha = service.eliminarCuenta(call.usuarioId(), req)
+            call.respond(HttpStatusCode.OK, EliminarCuentaResponse(
+                fechaEliminacion = fecha.toString(),
+                fechaEliminacionTexto = fecha.toLocalDate().toString()
+            ))
+        }
+
         // POST /api/v1/usuarios/me/contrasena/codigo -> Solicita código para cambiar/crear contraseña
         post("/usuarios/me/contrasena/codigo") {
             val respuesta = service.solicitarCodigoContrasena(call.usuarioId())
@@ -208,6 +218,11 @@ fun Route.usuarioRoutes(service: UsuarioService) {
         post("/usuarios/me/plan") {
             val req = call.recibir<ContratarPlanRequest>()
             call.respond(service.contratarPlan(call.usuarioId(), req))
+        }
+
+        // POST /api/v1/usuarios/me/plan/cancelar -> cancela el plan y regresa a comprador
+        post("/usuarios/me/plan/cancelar") {
+            call.respond(service.cancelarPlan(call.usuarioId()))
         }
     }
 }

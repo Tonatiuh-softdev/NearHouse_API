@@ -278,6 +278,66 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    // ------------------- CANCELAR PLAN -------------------
+    /**
+     * Cancela el plan: quita la suscripción y la fecha de vencimiento.
+     * Sube la versión de sesión para invalidar tokens viejos.
+     */
+    suspend fun cancelarPlan(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET fke_id_suscripcion = NULL,
+                    fh_inicio_suscripcion_usuario = NULL,
+                    fh_vencimiento_suscripcion_usuario = NULL,
+                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Cambia el rol del usuario (Comprador / Vendedor). */
+    suspend fun cambiarRol(idUsuario: Int, nuevoRol: String): Boolean = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE usuario
+                SET fke_id_rol = (SELECT pke_id_rol FROM rol WHERE t_nombre_rol = ? AND b_estatus_rol),
+                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
+                WHERE pke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, nuevoRol)
+                ps.setInt(2, idUsuario)
+                ps.executeUpdate() > 0
+            }
+        }
+    }
+
+    /** Oculta todas las publicaciones del usuario (no las borra). */
+    suspend fun ocultarAnuncios(idUsuario: Int): Int = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            // Ajusta el nombre de la tabla/columna si tu esquema usa otro (ej. b_activa_publicacion).
+            val sql = """
+                UPDATE publicacion
+                SET b_activa_publicacion = FALSE,
+                    fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP
+                WHERE fke_id_usuario = ?
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    // ------------------- CONTRASEÑA / FOTO / PLANES -------------------
+
     /** Registra intento fallido de contraseña o bloqueo. */
     suspend fun registrarIntentoFallido(idUsuario: Int, nuevosIntentos: Int, bloqueoHasta: OffsetDateTime?): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
@@ -437,6 +497,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
                         fke_id_rol = CASE WHEN ? THEN
                             (SELECT pke_id_rol FROM rol WHERE t_nombre_rol = 'Vendedor' AND b_estatus_rol)
                             ELSE fke_id_rol END,
+                        e_version_sesion_usuario = e_version_sesion_usuario + 1,
                         fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
                     WHERE pke_id_usuario = ?
                 """
