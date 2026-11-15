@@ -72,6 +72,13 @@ data class DesactivarCuentaRequest(
     val googleToken: String? = null
 )
 
+/** Respuesta de POST /usuarios/me/eliminar: la fecha en que se borrará la cuenta. */
+@Serializable
+data class EliminarCuentaResponse(
+    val fechaEliminacion: String,       // fecha y hora ISO
+    val fechaEliminacionTexto: String   // solo la fecha (aaaa-mm-dd)
+)
+
 @Serializable
 data class VerificarCodigoContrasenaRequest(
     val codigo: String

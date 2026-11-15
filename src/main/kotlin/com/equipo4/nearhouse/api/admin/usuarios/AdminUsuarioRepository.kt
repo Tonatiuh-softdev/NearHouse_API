@@ -212,7 +212,7 @@ class AdminUsuarioRepository(private val dataSource: DataSource) {
         // Solo los roles que puede ver quien consulta
         condicionRoles(filtros.rolesVisibles).let { (clausula, roles) ->
             clausulas += clausula
-            valores += roles
+            valores.addAll(roles)
         }
 
         filtros.buscar?.let { texto ->
