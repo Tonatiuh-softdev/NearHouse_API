@@ -7,6 +7,7 @@ import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
 import com.equipo4.nearhouse.api.auth.PasswordHasher
 import com.equipo4.nearhouse.api.auth.Roles
+import com.equipo4.nearhouse.api.common.ApiException
 import com.equipo4.nearhouse.api.common.ConflictoException
 import com.equipo4.nearhouse.api.common.CuentaDesactivadaException
 import com.equipo4.nearhouse.api.common.DemasiadasSolicitudesException
@@ -20,6 +21,7 @@ import com.equipo4.nearhouse.api.verificacion.CodigosCorreo
 import com.equipo4.nearhouse.api.verificacion.EnviadorCorreo
 import com.equipo4.nearhouse.api.verificacion.MotivoCodigo
 import com.equipo4.nearhouse.api.verificacion.PlantillasCorreo
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -768,34 +770,52 @@ class UsuarioService(
         return fechaEliminacion
     }
 
-    /** Cancela el plan y devuelve al usuario a "Comprador" (oculta sus anuncios). */
+    /**
+     * Cancela el plan. NO se quita en este momento: sigue siendo vendedor y sus anuncios se ven
+     * hasta la fecha que ya pagó. Ese día la tarea de suscripciones lo pasa a Comprador y sus
+     * anuncios dejan de verse (no se borran; si vuelve a contratar, reaparecen).
+     */
     suspend fun cancelarPlan(usuarioId: Int): AuthResponse {
         val usuario = repositorio.buscarPorId(usuarioId)
             ?: throw NoEncontradoException("Usuario no encontrado")
 
-        if (usuario.rol != "Vendedor") {
-            throw ConflictoException("Solo los vendedores con plan pueden cancelar la suscripción")
+        val ahora = OffsetDateTime.now()
+        val vencimiento = usuario.planVencimiento
+        // Con código, para que la app muestre el mensaje en su idioma
+        val sinPlan = ApiException(HttpStatusCode.Conflict, "No tienes un plan activo para cancelar", codigo = "SIN_PLAN_ACTIVO")
+        if (usuario.rol != "Vendedor" || usuario.planId == null || vencimiento == null || !vencimiento.isAfter(ahora)) {
+            throw sinPlan
+        }
+        if (usuario.planCancelacion != null) {
+            throw ApiException(
+                HttpStatusCode.Conflict,
+                "Tu plan ya está cancelado. Termina el ${formatearFecha(vencimiento)}",
+                codigo = "PLAN_YA_CANCELADO"
+            )
         }
 
-        val nombrePlanAnterior = usuario.planNombre ?: "tu plan"
+        val termina = repositorio.cancelarPlan(usuarioId) ?: throw sinPlan
 
-        repositorio.cancelarPlan(usuarioId)             // quitar plan y fecha de vencimiento
-        repositorio.cambiarRol(usuarioId, "Comprador")  // regresar a comprador
-        repositorio.ocultarAnuncios(usuarioId)          // ocultar anuncios sin borrarlos
-
-        // Enviar correo de aviso
+        // Correo de aviso (si falla, la cancelación queda igual)
         try {
-            enviador.enviar(PlantillasCorreo.planCancelado(usuario.correo, nombrePlanAnterior))
-        } catch (_: Exception) {
-            // Si el correo falla, la cancelación queda igual
+            enviador.enviar(
+                PlantillasCorreo.planCancelado(usuario.correo, usuario.planNombre ?: "", formatearFecha(termina))
+            )
+        } catch (e: Exception) {
+            logger.warn("No se pudo mandar el correo de plan cancelado: {}", e.message)
         }
 
-        val actualizado = repositorio.buscarPorId(usuarioId)!!
+        // El rol no cambia, pero la app espera un token nuevo junto con el usuario actualizado
+        val actualizado = repositorio.buscarPorId(usuarioId)
+            ?: throw NoEncontradoException("Usuario no encontrado")
         return AuthResponse(
             token = jwtService.generarToken(actualizado.id, actualizado.rol, actualizado.versionSesion),
             usuario = actualizado.toResponse()
         )
     }
+
+    /** Tarea periódica: renueva los planes que no se cancelaron y termina los cancelados que ya vencieron. */
+    suspend fun procesarSuscripciones(): Pair<Int, Int> = repositorio.procesarSuscripciones()
 
     /** Desactiva la cuenta del usuario previa verificación de identidad. */
     suspend fun desactivarCuenta(usuarioId: Int, req: DesactivarCuentaRequest) {
@@ -890,6 +910,11 @@ class UsuarioService(
         return "••• ••• $ultimos4"
     }
 
+    /** "15 de diciembre de 2026", en la hora de México. */
+    private fun formatearFecha(fecha: OffsetDateTime): String =
+        fecha.atZoneSameInstant(ZoneId.of("America/Mexico_City"))
+            .format(DateTimeFormatter.ofPattern("d 'de' MMMM 'de' yyyy", Locale("es", "MX")))
+
     private fun formatearFechaHoraColima(ahora: OffsetDateTime): String {
         val zoneId = ZoneId.of("America/Mexico_City")
         val localDate = ahora.atZoneSameInstant(zoneId)
@@ -939,7 +964,9 @@ class UsuarioService(
             ?: throw NoEncontradoException("El plan no existe o no está activo")
 
         val ahora = OffsetDateTime.now()
-        val planVigente = usuario.planId == plan.id && usuario.planVencimiento?.isAfter(ahora) == true
+        // Si lo canceló, puede volver a contratarlo (empieza un periodo nuevo y ya no queda cancelado)
+        val planVigente = usuario.planId == plan.id && usuario.planVencimiento?.isAfter(ahora) == true &&
+            usuario.planCancelacion == null
         if (planVigente) throw ConflictoException("Ya tienes este plan")
 
         val usarPrueba = plan.diasPrueba > 0 && !usuario.pruebaUsada

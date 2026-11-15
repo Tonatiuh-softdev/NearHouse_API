@@ -156,17 +156,24 @@ object PlantillasCorreo {
         texto = "Tu cuenta de NearHouse y tus anuncios se eliminaron. Gracias por usar NearHouse.",
     )
 
-    /** Correo de aviso cuando el usuario cancela su suscripción. */
-    fun planCancelado(para: String, planNombre: String) = MensajeCorreo(
-        para = para,
-        asunto = "Tu suscripción de NearHouse fue cancelada",
-        html = diseno(
-            "Tu suscripción se canceló",
-            "<p>Cancelaste tu plan <b>$planNombre</b>. Tu cuenta vuelve a ser de comprador y tus anuncios ya no se ven.</p>" +
-                "<p>Puedes contratar un plan nuevo cuando quieras y tus anuncios volverán a mostrarse.</p>",
-        ),
-        texto = "Cancelaste tu plan $planNombre. Tu cuenta vuelve a ser de comprador y tus anuncios ya no se ven. Puedes contratar un plan nuevo cuando quieras y tus anuncios volverán a mostrarse.",
-    )
+    /** Correo de aviso cuando el usuario cancela su suscripción. [termina]: fecha ya escrita ("15 de diciembre de 2026"). */
+    fun planCancelado(para: String, planNombre: String, termina: String): MensajeCorreo {
+        val plan = escaparHtml(planNombre)
+        return MensajeCorreo(
+            para = para,
+            asunto = "Cancelaste tu suscripción de NearHouse",
+            html = diseno(
+                "Tu suscripción se canceló",
+                "<p>Cancelaste tu plan <b>$plan</b>. Ya no se renovará.</p>" +
+                    "<p>Tus anuncios se seguirán viendo hasta el <b>$termina</b>. Después de esa fecha se ocultan " +
+                    "(no se borran) y tu cuenta vuelve a ser de comprador.</p>" +
+                    "<p>Si contratas un plan otra vez, tus anuncios vuelven a mostrarse.</p>",
+            ),
+            texto = "Cancelaste tu plan $planNombre. Tus anuncios se seguirán viendo hasta el $termina. " +
+                "Después se ocultan (no se borran) y tu cuenta vuelve a ser de comprador. " +
+                "Si contratas un plan otra vez, tus anuncios vuelven a mostrarse.",
+        )
+    }
 
     /**
      * Resultado de la apelación de una suspensión. La cuenta suspendida no puede entrar a ver sus avisos,

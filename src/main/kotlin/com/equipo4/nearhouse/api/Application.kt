@@ -134,6 +134,22 @@ fun Application.module(config: AppConfig) {
         }
     }
 
+    // Planes: renueva los que no se cancelaron y termina los cancelados que ya llegaron a su fecha
+    // (pasan a Comprador y sus anuncios se ocultan). Se revisa al arrancar y luego cada hora.
+    launch {
+        while (isActive) {
+            try {
+                val (renovados, terminados) = usuarioService.procesarSuscripciones()
+                if (renovados > 0 || terminados > 0) {
+                    log.info("Planes renovados: {}, planes cancelados que terminaron: {}", renovados, terminados)
+                }
+            } catch (e: Exception) {
+                log.error("Falló la revisión de planes (¿falta la migración 13?): {}", e.message)
+            }
+            delay(60 * 60 * 1000L)
+        }
+    }
+
     // Catálogo de colonias para el filtro de Ubicación
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
 

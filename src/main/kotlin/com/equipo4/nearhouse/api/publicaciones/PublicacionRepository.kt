@@ -143,7 +143,8 @@ class PublicacionRepository(private val dataSource: DataSource) {
 
     suspend fun esVisible(id: Int): Boolean = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
-            conn.prepareStatement("SELECT 1 FROM vw_publicacion_visible WHERE pke_id_publicacion = ? AND p.b_eliminada_publicacion = FALSE").use { ps ->
+            // Un anuncio eliminado queda apagado (b_estatus_publicacion = FALSE), así que la vista ya no lo muestra
+            conn.prepareStatement("SELECT 1 FROM vw_publicacion_visible WHERE pke_id_publicacion = ?").use { ps ->
                 ps.setInt(1, id)
                 ps.executeQuery().use { it.next() }
             }

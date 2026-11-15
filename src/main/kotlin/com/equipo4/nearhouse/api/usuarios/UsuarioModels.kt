@@ -225,7 +225,9 @@ data class PlanUsuarioResponse(
     val nombre: String,
     val fechaInicio: String,
     val fechaVencimiento: String,
-    val vigente: Boolean
+    val vigente: Boolean,
+    /** Lo canceló: ya no se renueva y termina en [fechaVencimiento] (sus anuncios se ven hasta entonces). */
+    val cancelado: Boolean = false
 )
 
 // ---------- Modelos internos (nunca se mandan a la app) ----------
@@ -251,6 +253,8 @@ data class Usuario(
     val planNombre: String? = null,
     val planInicio: OffsetDateTime? = null,
     val planVencimiento: OffsetDateTime? = null,
+    /** Cuándo canceló el plan (migración 13). Null = se renueva solo. */
+    val planCancelacion: OffsetDateTime? = null,
     val pruebaUsada: Boolean = false,
     val fechaDesactivacion: OffsetDateTime? = null,
     val fechaEliminacionProgramada: OffsetDateTime? = null,
@@ -282,7 +286,8 @@ data class Usuario(
                     nombre = planNombre.orEmpty(),
                     fechaInicio = inicio.toString(),
                     fechaVencimiento = venc.toString(),
-                    vigente = venc.isAfter(OffsetDateTime.now())
+                    vigente = venc.isAfter(OffsetDateTime.now()),
+                    cancelado = planCancelacion != null
                 )
             } else {
                 null

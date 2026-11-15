@@ -280,58 +280,40 @@ class UsuarioRepository(private val dataSource: DataSource) {
 
     // ------------------- CANCELAR PLAN -------------------
     /**
-     * Cancela el plan: quita la suscripción y la fecha de vencimiento.
-     * Sube la versión de sesión para invalidar tokens viejos.
+     * Cancela el plan (migración 13): solo guarda cuándo se canceló. El plan, el rol y los anuncios
+     * siguen igual hasta la fecha de vencimiento; ese día fn_procesar_suscripciones() quita el plan,
+     * lo pasa a Comprador y sus anuncios dejan de verse (no se borran).
+     * Regresa la fecha en que termina el plan, o null si no tiene un plan vigente sin cancelar.
      */
-    suspend fun cancelarPlan(idUsuario: Int): Boolean = withContext(Dispatchers.IO) {
+    suspend fun cancelarPlan(idUsuario: Int): OffsetDateTime? = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
             val sql = """
                 UPDATE usuario
-                SET fke_id_suscripcion = NULL,
-                    fh_inicio_suscripcion_usuario = NULL,
-                    fh_vencimiento_suscripcion_usuario = NULL,
-                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
+                SET fh_cancelacion_suscripcion_usuario = CURRENT_TIMESTAMP,
                     fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
                 WHERE pke_id_usuario = ?
+                  AND fke_id_suscripcion IS NOT NULL
+                  AND fh_cancelacion_suscripcion_usuario IS NULL
+                  AND fh_vencimiento_suscripcion_usuario > CURRENT_TIMESTAMP
+                RETURNING fh_vencimiento_suscripcion_usuario
             """
             conn.prepareStatement(sql).use { ps ->
                 ps.setInt(1, idUsuario)
-                ps.executeUpdate() > 0
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) rs.getObject(1, OffsetDateTime::class.java) else null
+                }
             }
         }
     }
 
-    /** Cambia el rol del usuario (Comprador / Vendedor). */
-    suspend fun cambiarRol(idUsuario: Int, nuevoRol: String): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * Renueva los planes vencidos que no se cancelaron y termina los cancelados que ya llegaron
+     * a su fecha (función de la migración 13). Regresa (renovados, terminados).
+     */
+    suspend fun procesarSuscripciones(): Pair<Int, Int> = withContext(Dispatchers.IO) {
         dataSource.connection.use { conn ->
-            val sql = """
-                UPDATE usuario
-                SET fke_id_rol = (SELECT pke_id_rol FROM rol WHERE t_nombre_rol = ? AND b_estatus_rol),
-                    e_version_sesion_usuario = e_version_sesion_usuario + 1,
-                    fh_fecha_actualizacion_usuario = CURRENT_TIMESTAMP
-                WHERE pke_id_usuario = ?
-            """
-            conn.prepareStatement(sql).use { ps ->
-                ps.setString(1, nuevoRol)
-                ps.setInt(2, idUsuario)
-                ps.executeUpdate() > 0
-            }
-        }
-    }
-
-    /** Oculta todas las publicaciones del usuario (no las borra). */
-    suspend fun ocultarAnuncios(idUsuario: Int): Int = withContext(Dispatchers.IO) {
-        dataSource.connection.use { conn ->
-            // Ajusta el nombre de la tabla/columna si tu esquema usa otro (ej. b_activa_publicacion).
-            val sql = """
-                UPDATE publicacion
-                SET b_activa_publicacion = FALSE,
-                    fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP
-                WHERE fke_id_usuario = ?
-            """
-            conn.prepareStatement(sql).use { ps ->
-                ps.setInt(1, idUsuario)
-                ps.executeUpdate()
+            conn.prepareStatement("SELECT renovadas, terminadas FROM fn_procesar_suscripciones()").use { ps ->
+                ps.executeQuery().use { rs -> if (rs.next()) rs.getInt(1) to rs.getInt(2) else 0 to 0 }
             }
         }
     }
@@ -493,6 +475,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
                     SET fke_id_suscripcion = ?,
                         fh_inicio_suscripcion_usuario = ?,
                         fh_vencimiento_suscripcion_usuario = ?,
+                        fh_cancelacion_suscripcion_usuario = NULL,
                         b_prueba_gratis_usada_usuario = b_prueba_gratis_usada_usuario OR ?,
                         fke_id_rol = CASE WHEN ? THEN
                             (SELECT pke_id_rol FROM rol WHERE t_nombre_rol = 'Vendedor' AND b_estatus_rol)
@@ -559,6 +542,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
         planNombre = getString("t_nombre_suscripcion"),
         planInicio = getObject("fh_inicio_suscripcion_usuario", OffsetDateTime::class.java),
         planVencimiento = getObject("fh_vencimiento_suscripcion_usuario", OffsetDateTime::class.java),
+        planCancelacion = getObject("fh_cancelacion_suscripcion_usuario", OffsetDateTime::class.java),
         pruebaUsada = getBoolean("b_prueba_gratis_usada_usuario"),
         fechaDesactivacion = getObject("fh_desactivacion_usuario", OffsetDateTime::class.java),
         fechaEliminacionProgramada = getObject("fh_eliminacion_programada_usuario", OffsetDateTime::class.java),
@@ -582,6 +566,7 @@ class UsuarioRepository(private val dataSource: DataSource) {
                    (u.by_foto_usuario IS NOT NULL) AS b_tiene_foto,
                    u.fke_id_suscripcion, s.t_nombre_suscripcion,
                    u.fh_inicio_suscripcion_usuario, u.fh_vencimiento_suscripcion_usuario,
+                   u.fh_cancelacion_suscripcion_usuario,
                    u.b_prueba_gratis_usada_usuario,
                    r.t_nombre_rol,
                    u.fh_desactivacion_usuario, u.fh_eliminacion_programada_usuario,
