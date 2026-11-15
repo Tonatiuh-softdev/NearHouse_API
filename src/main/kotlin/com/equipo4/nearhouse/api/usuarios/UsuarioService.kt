@@ -795,9 +795,7 @@ class UsuarioService(
 
         val nombrePlanAnterior = usuario.planNombre ?: "tu plan"
 
-        repositorio.cancelarPlan(usuarioId)             // quitar plan y fecha de vencimiento
-        repositorio.cambiarRol(usuarioId, "Comprador")  // regresar a comprador
-        repositorio.ocultarAnuncios(usuarioId)          // ocultar anuncios sin borrarlos
+        repositorio.cancelarPlanCompleto(usuarioId) // plan, rol y anuncios en una sola transacción
 
         // Enviar correo de aviso
         try {
