@@ -134,6 +134,19 @@ fun Application.module(config: AppConfig) {
         }
     }
 
+    // Borrado de cuentas vencidas: revisa al arrancar y luego cada 24 horas
+    launch {
+        while (isActive) {
+            try {
+                val borradas = usuarioService.borrarCuentasVencidas()
+                if (borradas > 0) log.info("Cuentas eliminadas definitivamente: {}", borradas)
+            } catch (e: Exception) {
+                log.error("Falló el borrado de cuentas vencidas: {}", e.message)
+            }
+            delay(24 * 60 * 60 * 1000L)
+        }
+    }
+
     // Catálogo de colonias para el filtro de Ubicación
     val coloniaService = ColoniaService(ColoniaRepository(dataSource))
 
