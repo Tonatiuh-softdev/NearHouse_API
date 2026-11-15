@@ -318,6 +318,30 @@ class UsuarioRepository(private val dataSource: DataSource) {
         }
     }
 
+    /**
+     * Al contratar un plan, vuelven a verse los anuncios que se ocultaron con la cancelación anterior
+     * (la que ocultaba los anuncios en el momento de cancelar). Con la cancelación actual los anuncios
+     * no se tocan; esto solo devuelve los que hayan quedado ocultos de antes.
+     */
+    suspend fun reactivarAnunciosOcultosPorPlan(idUsuario: Int): Int = withContext(Dispatchers.IO) {
+        dataSource.connection.use { conn ->
+            val sql = """
+                UPDATE publicacion
+                SET b_estatus_publicacion = TRUE,
+                    b_oculta_por_plan_publicacion = FALSE,
+                    fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP
+                WHERE fke_id_usuario = ?
+                  AND b_oculta_por_plan_publicacion = TRUE
+                  AND b_eliminada_publicacion = FALSE
+                  AND b_desactivada_admin_publicacion = FALSE
+            """
+            conn.prepareStatement(sql).use { ps ->
+                ps.setInt(1, idUsuario)
+                ps.executeUpdate()
+            }
+        }
+    }
+
     // ------------------- CONTRASEÑA / FOTO / PLANES -------------------
 
     /** Registra intento fallido de contraseña o bloqueo. */

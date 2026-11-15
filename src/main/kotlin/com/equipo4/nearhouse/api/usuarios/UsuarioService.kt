@@ -6,6 +6,7 @@ import com.equipo4.nearhouse.api.auth.GoogleProofService
 import com.equipo4.nearhouse.api.auth.JwtService
 import com.equipo4.nearhouse.api.auth.LoginAttemptTracker
 import com.equipo4.nearhouse.api.auth.PasswordHasher
+import com.equipo4.nearhouse.api.auth.PoliticaContrasena
 import com.equipo4.nearhouse.api.auth.Roles
 import com.equipo4.nearhouse.api.common.ApiException
 import com.equipo4.nearhouse.api.common.ConflictoException
@@ -488,9 +489,8 @@ class UsuarioService(
         }
 
         val nueva = req.contrasenaNueva.trim()
-        if (nueva.length < MIN_CONTRASENA) {
-            throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
-        }
+        val fallas = PoliticaContrasena.validar(nueva)
+        if (fallas.isNotEmpty()) throw ValidacionException(fallas)
         if (nueva.toByteArray().size > MAX_CONTRASENA_BYTES) {
             throw ValidacionException(listOf("La nueva contraseña es demasiado larga"))
         }
@@ -685,9 +685,8 @@ class UsuarioService(
 
         // PASO 6.3: Validar contraseña nueva
         val nueva = req.contrasenaNueva.trim()
-        if (nueva.length < MIN_CONTRASENA) {
-            throw ValidacionException(listOf("La nueva contraseña debe tener al menos $MIN_CONTRASENA caracteres"))
-        }
+        val fallas = PoliticaContrasena.validar(nueva)
+        if (fallas.isNotEmpty()) throw ValidacionException(fallas)
         if (nueva.toByteArray().size > MAX_CONTRASENA_BYTES) {
             throw ValidacionException(listOf("La nueva contraseña es demasiado larga"))
         }
@@ -768,6 +767,23 @@ class UsuarioService(
         }
 
         return fechaEliminacion
+    }
+
+    /**
+     * Borra de verdad las cuentas cuya fecha de eliminación ya llegó (30 días después de pedirla).
+     * Si el usuario inició sesión antes de esa fecha, la fecha se quitó y no se borra.
+     * Regresa cuántas cuentas borró.
+     */
+    suspend fun borrarCuentasVencidas(): Int {
+        var borradas = 0
+        for ((id, _) in repositorio.cuentasPorEliminar()) {
+            try {
+                if (repositorio.eliminarDefinitivamente(id)) borradas++
+            } catch (_: Exception) {
+                // Si una cuenta falla, las demás se siguen procesando
+            }
+        }
+        return borradas
     }
 
     /**
@@ -981,6 +997,14 @@ class UsuarioService(
             pasarAVendedor = usuario.rol == "Comprador"
         )
 
+        // Si tenía anuncios ocultos por la cancelación anterior (la que los ocultaba al momento), vuelven a verse.
+        // El plan ya quedó contratado: si esto falla, solo se deja en el log y la contratación sigue.
+        try {
+            repositorio.reactivarAnunciosOcultosPorPlan(usuarioId)
+        } catch (e: Exception) {
+            logger.warn("No se pudieron reactivar los anuncios ocultos por plan: {}", e.message)
+        }
+
         notificaciones.notificar(
             usuarioId,
             TipoNotificacion.PLAN_CONTRATADO,
@@ -1020,9 +1044,7 @@ class UsuarioService(
         val errores = mutableListOf<String>()
 
         if (!REGEX_CORREO.matches(correo)) errores += "El correo no tiene un formato válido"
-        if (req.contrasena.length < MIN_CONTRASENA) {
-            errores += "La contraseña debe tener al menos $MIN_CONTRASENA caracteres"
-        }
+        errores += PoliticaContrasena.validar(req.contrasena)
         if (req.contrasena.toByteArray().size > MAX_CONTRASENA_BYTES) {
             errores += "La contraseña es demasiado larga (máximo $MAX_CONTRASENA_BYTES caracteres)"
         }
