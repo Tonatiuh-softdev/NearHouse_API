@@ -190,7 +190,17 @@ class PublicacionRepository(private val dataSource: DataSource) {
         }
     }
 
-    suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?): Boolean =
+    /**
+     * Cambia el estado de un anuncio en revisión. Con [permitirRechazada] también acepta
+     * uno rechazado (para aprobarlo después). Regresa false si el anuncio no estaba en esos estados.
+     */
+    suspend fun revisar(
+        id: Int,
+        revisorId: Int,
+        nuevoEstado: String,
+        motivo: String?,
+        permitirRechazada: Boolean = false
+    ): Boolean =
         withContext(Dispatchers.IO) {
             dataSource.connection.use { conn ->
                 conn.prepareStatement(
@@ -202,7 +212,9 @@ class PublicacionRepository(private val dataSource: DataSource) {
                         fke_id_usuario_revision = ?,
                         fh_fecha_actualizacion_publicacion = CURRENT_TIMESTAMP,
                         fke_id_usuario_actualizacion = ?
-                    WHERE pke_id_publicacion = ? AND t_estado_publicacion = 'EN_REVISION'
+                    WHERE pke_id_publicacion = ?
+                      AND (t_estado_publicacion = 'EN_REVISION'
+                           OR (? AND t_estado_publicacion = 'RECHAZADA'))
                     """
                 ).use { ps ->
                     ps.setString(1, nuevoEstado)
@@ -210,6 +222,7 @@ class PublicacionRepository(private val dataSource: DataSource) {
                     ps.setInt(3, revisorId)
                     ps.setInt(4, revisorId)
                     ps.setInt(5, id)
+                    ps.setBoolean(6, permitirRechazada)
                     ps.executeUpdate() > 0
                 }
             }

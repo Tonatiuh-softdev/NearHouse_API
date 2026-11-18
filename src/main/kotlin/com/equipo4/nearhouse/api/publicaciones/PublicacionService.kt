@@ -192,8 +192,11 @@ class PublicacionService(
 
     suspend fun aprobar(rol: String, revisorId: Int, id: Int): PublicacionResponse {
         exigirAdmin(rol)
-        exigirAnuncioAjeno(id, revisorId)
-        revisar(id, revisorId, ESTADO_PUBLICADA, null)
+        val actual = exigirAnuncioAjeno(id, revisorId)
+        // Un anuncio rechazado se puede aprobar después (por ejemplo, si el administrador se equivocó).
+        // El rechazado no ocupaba lugar en el plan del vendedor, así que se revisa que todavía le quede.
+        if (actual.estado == ESTADO_RECHAZADA && actual.activa) exigirCupoDelVendedor(actual.vendedor.id)
+        revisar(id, revisorId, ESTADO_PUBLICADA, null, permitirRechazada = true)
         val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
         notificaciones.notificar(
             anuncio.vendedor.id,
@@ -262,10 +265,43 @@ class PublicacionService(
         if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
         repositorio.eliminarCualquiera(id, revisorId)
     }
-    private suspend fun revisar(id: Int, revisorId: Int, nuevoEstado: String, motivo: String?) {
-        if (!repositorio.revisar(id, revisorId, nuevoEstado, motivo)) {
-            if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
-            throw ConflictoException("Este anuncio ya fue revisado")
+    private suspend fun revisar(
+        id: Int,
+        revisorId: Int,
+        nuevoEstado: String,
+        motivo: String?,
+        permitirRechazada: Boolean = false
+    ) {
+        if (!repositorio.revisar(id, revisorId, nuevoEstado, motivo, permitirRechazada)) {
+            val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+            throw ConflictoException(
+                when (anuncio.estado) {
+                    ESTADO_PUBLICADA -> "Este anuncio ya está publicado"
+                    ESTADO_RECHAZADA -> "Este anuncio ya fue rechazado"
+                    else -> "Este anuncio ya fue revisado"
+                }
+            )
+        }
+    }
+
+    /**
+     * Antes de aprobar un anuncio rechazado: el vendedor debe seguir con un plan vigente
+     * y tener lugar para un anuncio activo más. El mensaje va dirigido al administrador.
+     */
+    private suspend fun exigirCupoDelVendedor(vendedorId: Int) {
+        val estado = repositorio.estadoPublicador(vendedorId)
+            ?: throw NoEncontradoException("El vendedor de este anuncio ya no existe")
+        if (estado.rol in ROLES_ADMIN) return
+        if (estado.rol != Roles.VENDEDOR || !estado.planVigente) {
+            throw ConflictoException("No se puede aprobar: el vendedor ya no tiene un plan vigente.")
+        }
+        val limite = estado.limite ?: return
+        if (estado.activas >= limite) {
+            val anuncios = if (limite == 1) "1 anuncio activo" else "$limite anuncios activos"
+            throw ConflictoException(
+                "No se puede aprobar: el plan del vendedor permite $anuncios y ya los tiene ocupados. " +
+                    "El vendedor debe pausar o eliminar otro anuncio."
+            )
         }
     }
 
