@@ -66,7 +66,11 @@ class EnviadorPushFirebase(credenciales: String, projectId: String) : EnviadorPu
                 if (e.messagingErrorCode == MessagingErrorCode.UNREGISTERED) {
                     ResultadoPush.TOKEN_INVALIDO
                 } else {
-                    log.warn("Firebase rechazó un envío: {}", e.messagingErrorCode)
+                    // errorCode dice si es de credenciales (UNAUTHENTICATED/PERMISSION_DENIED) o del celular
+                    log.warn(
+                        "Firebase rechazó un envío: messagingErrorCode={} errorCode={} detalle={}",
+                        e.messagingErrorCode, e.errorCode, e.message
+                    )
                     ResultadoPush.ERROR
                 }
             } catch (e: Exception) {

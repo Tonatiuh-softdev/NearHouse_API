@@ -3,7 +3,7 @@ package com.equipo4.nearhouse.api.notificaciones
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
-/** Tipos de aviso. Deben coincidir con la regla ck_notificacion_tipo (migraciones 12 y 16). */
+/** Tipos de aviso. Deben coincidir con la regla ck_notificacion_tipo (migraciones 12, 16 y 18). */
 enum class TipoNotificacion {
     BIENVENIDA,
     PLAN_CONTRATADO,
@@ -17,7 +17,9 @@ enum class TipoNotificacion {
     // Migración 16: apelaciones
     APELACION_ENVIADA,
     APELACION_ACEPTADA,
-    APELACION_RECHAZADA
+    APELACION_RECHAZADA,
+    // Migración 18: un administrador eliminó el anuncio
+    PUBLICACION_ELIMINADA
 }
 
 /** Un aviso tal como lo ve la app. El texto no viene: la app lo arma con sus strings.xml. */

@@ -14,6 +14,7 @@ import io.ktor.http.content.forEachPart
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receiveMultipart
+import io.ktor.server.request.receiveNullable
 import io.ktor.server.response.cacheControl
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -25,6 +26,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.CancellationException
 import kotlinx.io.readByteArray
 
 private const val MAX_FOTOS_LEIDAS = MAX_FOTOS_ANUNCIO + 1
@@ -127,9 +129,17 @@ fun Route.publicacionRoutes(service: PublicacionService) {
                 call.respond(HttpStatusCode.NoContent)
             }
 
-            // DELETE /api/v1/admin/publicaciones/{id} -> elimina cualquier anuncio (204 sin cuerpo)
+            // DELETE /api/v1/admin/publicaciones/{id}  {"motivo": "..."} -> elimina cualquier anuncio (204 sin cuerpo).
+            // El cuerpo es opcional: versiones viejas de la app lo mandan vacío.
             delete("/{id}") {
-                service.eliminarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta())
+                val motivo = try {
+                    call.receiveNullable<MotivoRequest>()?.motivo
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                service.eliminarComoAdmin(call.usuarioRol(), call.usuarioId(), call.idDeRuta(), motivo)
                 call.respond(HttpStatusCode.NoContent)
             }
         }

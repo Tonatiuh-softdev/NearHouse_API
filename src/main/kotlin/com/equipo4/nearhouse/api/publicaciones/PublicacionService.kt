@@ -193,9 +193,19 @@ class PublicacionService(
     suspend fun aprobar(rol: String, revisorId: Int, id: Int): PublicacionResponse {
         exigirAdmin(rol)
         val actual = exigirAnuncioAjeno(id, revisorId)
-        // Un anuncio rechazado se puede aprobar después (por ejemplo, si el administrador se equivocó).
-        // El rechazado no ocupaba lugar en el plan del vendedor, así que se revisa que todavía le quede.
-        if (actual.estado == ESTADO_RECHAZADA && actual.activa) exigirCupoDelVendedor(actual.vendedor.id)
+        if (actual.estado == ESTADO_RECHAZADA) {
+            // Un anuncio retirado por un reporte solo vuelve si se acepta su apelación:
+            // aprobarlo aquí dejaría la apelación (y el reporte) sin resolver
+            val retiradas = apelaciones?.retiradasPorReporte(actual.vendedor.id).orEmpty()
+            if (id in retiradas) {
+                throw ConflictoException(
+                    "Este anuncio se retiró por un reporte. Solo vuelve a publicarse si se acepta su apelación."
+                )
+            }
+            // Un rechazo normal se puede corregir aprobándolo (por ejemplo, si el administrador se equivocó).
+            // El rechazado no ocupaba lugar en el plan del vendedor, así que se revisa que todavía le quede.
+            if (actual.activa) exigirCupoDelVendedor(actual.vendedor.id)
+        }
         revisar(id, revisorId, ESTADO_PUBLICADA, null, permitirRechazada = true)
         val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
         notificaciones.notificar(
@@ -259,11 +269,27 @@ class PublicacionService(
         }
     }
 
-    /** Borrado lógico de cualquier anuncio (administrador). Queda registrado quién lo eliminó. */
-    suspend fun eliminarComoAdmin(rol: String, revisorId: Int, id: Int) {
+    /**
+     * Borrado lógico de cualquier anuncio (administrador). Queda registrado quién lo eliminó.
+     * Si el anuncio es de otra persona, se le avisa (campanita y push) con el motivo, si viene.
+     * El motivo es opcional para que sigan funcionando versiones de la app que no lo mandan.
+     */
+    suspend fun eliminarComoAdmin(rol: String, revisorId: Int, id: Int, motivo: String? = null) {
         exigirAdmin(rol)
-        if (repositorio.buscarPorId(id) == null) throw NoEncontradoException("El anuncio no existe")
-        repositorio.eliminarCualquiera(id, revisorId)
+        val anuncio = repositorio.buscarPorId(id) ?: throw NoEncontradoException("El anuncio no existe")
+        val eliminado = repositorio.eliminarCualquiera(id, revisorId)
+        if (eliminado && anuncio.vendedor.id != revisorId) {
+            val limpio = motivo?.trim()?.take(MAX_MOTIVO).orEmpty()
+            notificaciones.notificar(
+                anuncio.vendedor.id,
+                TipoNotificacion.PUBLICACION_ELIMINADA,
+                buildMap {
+                    put("titulo", anuncio.titulo)
+                    if (limpio.isNotEmpty()) put("motivo", limpio)
+                },
+                idPublicacion = id,
+            )
+        }
     }
     private suspend fun revisar(
         id: Int,

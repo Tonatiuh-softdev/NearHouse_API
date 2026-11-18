@@ -85,8 +85,10 @@ fun Application.module(config: AppConfig) {
     // Push: Firebase real si hay FIREBASE_CREDENCIALES; si no, solo consola
     val enviadorPush: EnviadorPush =
         if (config.firebaseCredenciales.isNotBlank()) {
+            log.info("Notificaciones push: Firebase (proyecto {})", config.firebaseProjectId)
             EnviadorPushFirebase(config.firebaseCredenciales, config.firebaseProjectId)
         } else {
+            log.warn("Notificaciones push: modo consola, falta FIREBASE_CREDENCIALES (no se manda nada al celular)")
             EnviadorPushConsola()
         }
 

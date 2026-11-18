@@ -58,10 +58,19 @@ object TextosPush {
                 Texto("Anuncio rechazado", "\"$titulo\" fue rechazado. Motivo: $motivo")
             }
 
-            TipoNotificacion.PUBLICACION_RETIRADA -> if (en) {
-                Texto("Listing removed", "\"$titulo\" was removed after a report.")
-            } else {
-                Texto("Anuncio retirado", "\"$titulo\" fue retirado a raíz de un reporte.")
+            // Con motivo: lo desactivó un administrador. Sin motivo: se retiró al atender un reporte
+            TipoNotificacion.PUBLICACION_RETIRADA -> when {
+                en && motivo.isNotEmpty() -> Texto("Listing removed", "\"$titulo\" is no longer visible. Reason: $motivo")
+                en -> Texto("Listing removed", "\"$titulo\" was removed after a report.")
+                motivo.isNotEmpty() -> Texto("Anuncio retirado", "\"$titulo\" ya no está visible. Motivo: $motivo")
+                else -> Texto("Anuncio retirado", "\"$titulo\" fue retirado a raíz de un reporte.")
+            }
+
+            TipoNotificacion.PUBLICACION_ELIMINADA -> when {
+                en && motivo.isNotEmpty() -> Texto("Listing deleted", "An administrator deleted \"$titulo\". Reason: $motivo")
+                en -> Texto("Listing deleted", "An administrator deleted \"$titulo\".")
+                motivo.isNotEmpty() -> Texto("Anuncio eliminado", "Un administrador eliminó \"$titulo\". Motivo: $motivo")
+                else -> Texto("Anuncio eliminado", "Un administrador eliminó \"$titulo\".")
             }
 
             TipoNotificacion.REPORTE_ENVIADO -> if (en) {
